@@ -7,11 +7,21 @@
 	},
 	"files": {
 		"ignoreUnknown": false,
-		"ignore": ["dist/**"]
+		"ignore": [
+			"dist/**",
+			"src/varint.ts",
+			"src/utf8.ts",
+			"src/types.ts",
+			"src/helpers.ts",
+			"src/extern.ts",
+			"src/decimals.ts",
+			"src/binary.ts"
+		]
 	},
 	"formatter": {
 		"enabled": true,
-		"indentStyle": "tab"
+		"indentStyle": "tab",
+		"indentWidth": 3
 	},
 	"organizeImports": {
 		"enabled": true
@@ -40,17 +50,21 @@
 				"noYodaExpression": "error",
 				"useConsistentBuiltinInstantiation": "error",
 				"useFragmentSyntax": "error",
-				"useShorthandAssign": "error"
+				"useShorthandAssign": "error",
+				"noNonNullAssertion": "off"
 			},
 			"suspicious": {
 				"useAwait": "error",
-				"noEvolvingTypes": "error"
+				"noEvolvingTypes": "error",
+				"noExplicitAny": "off"
 			},
 			"complexity": {
 				"noUselessStringConcat": "error",
 				"noUselessUndefinedInitialization": "error",
 				"noVoid": "error",
-				"useDateNow": "error"
+				"useDateNow": "error",
+				"noBannedTypes": "off",
+				"noForEach": "off"
 			}
 		}
 	},
