@@ -1,0 +1,98 @@
+{
+	"author": "Marius Modlich <m.modlich@digitalkitchen.io>",
+	"bugs": {
+		"url": "https://github.com/CosmosContracts/pioneer/issues"
+	},
+	"config": {
+		"commitizen": {
+			"path": "./node_modules/cz-conventional-changelog"
+		}
+	},
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/types/index.d.ts",
+				"default": "./dist/esm/index.js"
+			},
+			"require": {
+				"types": "./dist/types/index.d.ts",
+				"default": "./dist/cjs/index.js"
+			}
+		}
+	},
+	"dependencies": {
+		"@bufbuild/buf": "^1.52.1",
+		"@bufbuild/protobuf": "2.2.5",
+		"@bufbuild/protoc-gen-es": "2.2.5",
+		"@connectrpc/connect": "2.0.2",
+		"@connectrpc/connect-node": "^2.0.2",
+		"@connectrpc/connect-web": "^2.0.2",
+		"@cosmjs/amino": "0.33.1",
+		"@cosmjs/cosmwasm-stargate": "0.33.1",
+		"@cosmjs/encoding": "0.33.1",
+		"@cosmjs/proto-signing": "0.33.1",
+		"@cosmjs/stargate": "0.33.1",
+		"@interchainjs/cosmos": "1.11.0",
+		"@interchainjs/crypto": "^1.11.5",
+		"@interchainjs/pubkey": "1.11.0",
+		"@interchainjs/utils": "1.11.0",
+		"cosmjs-types": "0.9.0"
+	},
+	"description": "JS-based standard library for Juno's Protobuffers",
+	"devDependencies": {
+		"@biomejs/biome": "1.9.4",
+		"@commitlint/cli": "19.8.0",
+		"@commitlint/config-conventional": "19.8.0",
+		"@types/bun": "1.2.9",
+		"commitizen": "4.3.1",
+		"cz-conventional-changelog": "3.3.0",
+		"husky": "9.1.7",
+		"lint-staged": "15.5.0",
+		"ts-node": "10.9.2",
+		"typescript": "5.8.3"
+	},
+	"directories": {
+		"lib": "src"
+	},
+	"files": ["types", "dist"],
+	"homepage": "https://junonetwork.io",
+	"keywords": [],
+	"license": "SEE LICENSE IN LICENSE",
+	"main": "main/index.js",
+	"name": "@buildonjuno/pioneer",
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/CosmosContracts/junojs.git"
+	},
+	"scripts": {
+		"clean": "rimraf dist",
+		"build:types": "tsc -p tsconfig.declarations.json",
+		"build:rollup": "rollup -c --configPlugin typescript",
+		"test-gen": "bun ./scripts/test-gen.ts",
+		"test-grpc": "bun --esm ./scripts/test-grpc.ts",
+		"lint": "biome check",
+		"lint:fix": "biome check --fix",
+		"buidl": "generate && bun run build && bun lint",
+		"prepare": "mise install && husky"
+	},
+	"trustedDependencies": [
+		"@biomejs/biome",
+		"@cosmology/protobufjs",
+		"core-js",
+		"core-js-pure",
+		"es5-ext",
+		"protobufjs"
+	],
+	"typings": "types/index.d.ts",
+	"version": "28.0.2-beta.0",
+	"type": "module",
+	"engines": {
+		"bun": ">=1.0.0"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": ["@biomejs/biome", "@bufbuild/buf"]
+	}
+}

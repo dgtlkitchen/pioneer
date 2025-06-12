@@ -1,0 +1,23 @@
+# logs
+logs
+*.log
+npm-debug.log*
+
+# dependency directories
+node_modules
+
+# package lock
+bun.lockb
+
+# project files
+.gitignore
+.vscode
+eslint.config.mjs
+biome.json
+.commitlintrc.json
+.lintstagedrc.json
+.mise.toml
+.releaserc
+CHANGELOG.md
+package.json
+src

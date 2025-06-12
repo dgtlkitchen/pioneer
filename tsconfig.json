@@ -1,0 +1,35 @@
+{
+	"compilerOptions": {
+		/* Basic Options */
+		"target": "ESNext",
+		"module": "NodeNext",
+		"lib": ["ESNext"],
+		"moduleResolution": "NodeNext",
+		"rootDir": "src",
+		"outDir": "main",
+		/* Emit */
+		"noEmit": true,
+		"declaration": true,
+		"declarationDir": "./types",
+		"sourceMap": true,
+		"removeComments": true,
+		/* Interop Constraints */
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"allowImportingTsExtensions": true,
+		/* Type Checking */
+		"strict": true,
+		"forceConsistentCasingInFileNames": true,
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitAny": true,
+		"strictNullChecks": true,
+		/* Module Resolution */
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		/* Completeness */
+		"skipLibCheck": true,
+		"useDefineForClassFields": true
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "main"]
+}
