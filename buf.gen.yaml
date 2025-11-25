@@ -1,11 +1,10 @@
-# Learn more: https://buf.build/docs/configuration/v2/buf-gen-yaml
 version: v2
+
 clean: true
-inputs:
-  - directory: "proto"
+
 plugins:
   - local: protoc-gen-es
-    out: generated/common
+    out: gen/common
     include_imports: true
     opt:
       - target=ts

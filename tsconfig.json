@@ -2,11 +2,9 @@
 	"compilerOptions": {
 		/* Basic Options */
 		"target": "ESNext",
-		"module": "NodeNext",
-		"lib": ["ESNext"],
-		"moduleResolution": "NodeNext",
-		"rootDir": "src",
-		"outDir": "main",
+		"module": "ESNext",
+		"lib": ["ESNext", "DOM"],
+		"moduleResolution": "Bundler",
 		/* Emit */
 		"noEmit": true,
 		"declaration": true,
@@ -28,8 +26,9 @@
 		"isolatedModules": true,
 		/* Completeness */
 		"skipLibCheck": true,
-		"useDefineForClassFields": true
+		"useDefineForClassFields": true,
+		"types": ["bun-types", "node"]
 	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "main"]
+	"include": ["src/**/*", "gen/**/*", "tests/**/*", "scripts/**/*"],
+	"exclude": ["node_modules", "dist"]
 }

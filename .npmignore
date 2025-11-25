@@ -1,23 +1,31 @@
 # logs
 logs
 *.log
-npm-debug.log*
 
 # dependency directories
 node_modules
 
 # package lock
-bun.lockb
+bun.lock
+buf.lock
+
 
 # project files
 .gitignore
 .vscode
-eslint.config.mjs
 biome.json
+.husky
 .commitlintrc.json
-.lintstagedrc.json
+.env
 .mise.toml
-.releaserc
-CHANGELOG.md
+.lintstagedrc.json
+buf.gen.yaml
+buf.yaml
 package.json
+rolldown.config.ts
 src
+tests
+scripts
+gen
+tsconfig.json
+tsconfig.types.json

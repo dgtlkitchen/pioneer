@@ -1,10 +1,10 @@
 # Logs
 logs
 *.log
-npm-debug.log*
 
 # dist
-main
+dist
+gen
 
 # dependency directories
 node_modules
@@ -14,7 +14,10 @@ node_modules
 
 # others
 .DS_Store
-
 .vscode
+.env
 
-dependencies
+# Test artifacts
+tests/tmp/
+coverage/
+.coverage/

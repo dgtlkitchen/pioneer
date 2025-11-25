@@ -1,0 +1,13 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"emitDeclarationOnly": true,
+		"declarationMap": false,
+		"declarationDir": "./dist/types",
+		"outDir": "./dist/types",
+		"rootDir": "gen"
+	},
+	"include": ["gen/**/*.ts"],
+	"exclude": ["src/generator/**/*", "dist", "node_modules"]
+}

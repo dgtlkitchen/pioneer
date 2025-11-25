@@ -1,21 +1,43 @@
+import { readdirSync } from "node:fs"
+import { join, relative } from "node:path"
 import { defineConfig } from "rolldown"
-import { dts } from "rolldown-plugin-dts"
 import { dependencies } from "./package.json"
 
+const collectInputs = (root: string): string[] => {
+	const entries: string[] = []
+
+	const walk = (dir: string) => {
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			if (entry.name.startsWith(".")) continue
+
+			const fullPath = join(dir, entry.name)
+			if (entry.isDirectory()) {
+				walk(fullPath)
+			} else if (entry.name.endsWith(".ts")) {
+				entries.push(relative(".", fullPath))
+			}
+		}
+	}
+
+	walk(root)
+	return entries
+}
+
+const inputs = [...collectInputs("gen")]
+
 const common = defineConfig({
-	input: {
-		cosmos: "src/cosmos/index.ts",
-		juno: "src/juno/index.ts",
-		cosmwasm: "src/cosmwasm/index.ts",
-		gaia: "src/gaia/index.ts",
-		ibc: "src/ibc/index.ts",
-		osmosis: "src/osmosis/index.ts"
+	input: inputs,
+	tsconfig: "./tsconfig.json",
+	optimization: {
+		inlineConst: true,
+		pifeForModuleWrappers: true,
 	},
-	jsx: false,
 	treeshake: {
-		moduleSideEffects: "no-external"
+		annotations: false,
+		moduleSideEffects: false,
+		propertyReadSideEffects: false,
+		unknownGlobalSideEffects: false
 	},
-	keepNames: true,
 	transform: {
 		assumptions: {
 			setPublicClassFields: true,
@@ -23,63 +45,80 @@ const common = defineConfig({
 		}
 	},
 	external: Object.keys(dependencies),
-	platform: "browser"
+	preserveEntrySignatures: "strict"
 })
 
 const config = defineConfig([
 	{
 		...common,
+		platform: "neutral",
 		resolve: {
 			conditionNames: ["node", "import"],
-			tsconfigFilename: "./tsconfig.json",
 			symlinks: true,
 			exportsFields: [["exports"]]
 		},
 		output: {
-			sourcemap: true,
+			sourcemap: false,
 			minify: {
-				compress: true,
-				mangle: true,
-				removeWhitespace: true
+				compress: {
+					unused: true,
+					dropDebugger: true,
+				},
+				mangle: {
+					toplevel: true,
+					keepNames: true
+				},
+				codegen: {
+					removeWhitespace: true
+				}
 			},
 			dir: "dist/esm",
 			format: "esm",
-			entryFileNames: "[name]/index.mjs",
-			chunkFileNames: "common/[name]-[hash].mjs"
+			preserveModules: true,
+			preserveModulesRoot: "gen",
+			entryFileNames: "[name].js",
+			chunkFileNames: "chunks/[name]-[hash].js",
+			generatedCode: {
+				preset: "es2015",
+				profilerNames: false,
+				symbols: false
+			}
 		}
 	},
 	{
 		...common,
 		platform: "node",
 		resolve: {
-			tsconfigFilename: "./tsconfig.json",
 			symlinks: true,
 			exportsFields: [["exports"]],
 			conditionNames: ["node", "require"]
 		},
 		output: {
-			sourcemap: true,
+			sourcemap: false,
 			minify: {
-				compress: true,
-				mangle: true,
-				removeWhitespace: true
+				compress: {
+					unused: true,
+					dropDebugger: true
+				},
+				mangle: {
+					toplevel: true,
+					keepNames: true
+				},
+				codegen: {
+					removeWhitespace: true
+				}
 			},
 			dir: "dist/cjs",
 			format: "cjs",
-			entryFileNames: "[name]/index.cjs",
-			chunkFileNames: "common/[name]-[hash].cjs"
-		}
-	},
-	{
-		...common,
-		plugins: [dts({ emitDtsOnly: true })],
-		output: {
-			sourcemap: true,
-			exports: "named",
-			dir: "dist/types",
-			format: "esm",
-			entryFileNames: "[name].ts",
-			chunkFileNames: "common/[name]-[hash].d.ts"
+			preserveModules: true,
+			preserveModulesRoot: "gen",
+			entryFileNames: "[name].cjs",
+			chunkFileNames: "chunks/[name]-[hash].cjs",
+			generatedCode: {
+				preset: "es2015",
+				profilerNames: false,
+				symbols: false
+			}
 		}
 	}
 ])
