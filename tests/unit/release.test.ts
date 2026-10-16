@@ -769,6 +769,59 @@ async function workflowBlock(marker: string) {
 	return matches[0]
 }
 
+test("actual workflow resolves native runner paths before tool verification", async () => {
+	const script = await workflowScript("PIONEER_PATHS")
+	const parsed: unknown = Bun.YAML.parse(
+		await fs.readFile(join(root, ".github/workflows/release.yml"), "utf8")
+	)
+	if (!record(parsed) || !record(parsed.jobs))
+		throw new Error("Read workflow: missing jobs")
+	for (const job of Object.values(parsed.jobs)) {
+		if (!record(job) || !Array.isArray(job.steps))
+			throw new Error("Read workflow: missing steps")
+		expect(JSON.stringify(job.env)).not.toContain("runner.temp")
+		const paths = job.steps.findIndex(
+			(step) =>
+				record(step) &&
+				typeof step.run === "string" &&
+				step.run.includes("$PIONEER_PATHS")
+		)
+		const tools = job.steps.findIndex(
+			(step) =>
+				record(step) &&
+				typeof step.run === "string" &&
+				step.run.includes("$PIONEER_TOOLS")
+		)
+		expect(paths).toBeGreaterThanOrEqual(0)
+		expect(paths).toBeLessThan(tools)
+	}
+	for (const scenario of ["accepted", "relative", "newline"])
+		await temporary(async (directory) => {
+			const environment = join(directory, "environment")
+			const runner =
+				scenario === "relative"
+					? "relative"
+					: scenario === "newline"
+						? `${directory}\ninjected=value`
+						: join(directory, "runner with spaces")
+			const command = execute("node", ["--input-type=module", "-e", script], {
+				env: { ...process.env, RUNNER_TEMP: runner, GITHUB_ENV: environment },
+				timeout: 10000
+			})
+			if (scenario === "accepted") {
+				await command
+				expect(await fs.readFile(environment, "utf8")).toBe(
+					`PIONEER_TOOL_RECORD=${join(runner, "tools.json")}\nPIONEER_ARCHIVES=${join(runner, "archives")}\nPIONEER_EXTRACTED=${join(runner, "extracted")}\n`
+				)
+			} else {
+				await expect(command).rejects.toThrow("Resolve runner paths")
+				await expect(fs.stat(environment)).rejects.toMatchObject({
+					code: "ENOENT"
+				})
+			}
+		})
+})
+
 test("actual workflow stages runtime resolutions from the Bun lock without dependency drift", async () => {
 	const block = await workflowBlock("STAGE")
 	for (const scenario of ["accepted", "missing", "malformed", "invalid-json"])

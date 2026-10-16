@@ -16,6 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  PIONEER_PATHS: |
+    import { appendFileSync } from 'node:fs';
+    import { isAbsolute, join } from 'node:path';
+    const root = process.env.RUNNER_TEMP;
+    if (typeof root !== 'string' || !isAbsolute(root) || /[\r\n]/.test(root)) throw new Error('Resolve runner paths: invalid temporary directory');
+    const paths = { PIONEER_TOOL_RECORD: 'tools.json', PIONEER_ARCHIVES: 'archives', PIONEER_EXTRACTED: 'extracted' };
+    appendFileSync(process.env.GITHUB_ENV, Object.entries(paths).map(([name, path]) => `${name}=${join(root, path)}\n`).join(''));
   PIONEER_SCAN: |
     import { execFileSync } from 'node:child_process';
     import { createHash } from 'node:crypto';
@@ -228,7 +235,6 @@ jobs:
     env:
       PIONEER_NODE: '24.22.0'
       PIONEER_RUNNER: ubuntu-24.04
-      PIONEER_TOOL_RECORD: ${{ runner.temp }}/tools.json
       PIONEER_QUALIFICATION: ${{ inputs.qualification }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -240,6 +246,9 @@ jobs:
       - uses: oven-sh/setup-bun@f4d14e03ff726c06358e5557344e1da148b56cf7
         with:
           bun-version: '1.4.3'
+      - name: Resolve runner paths
+        shell: bash
+        run: node --input-type=module -e "$PIONEER_PATHS"
       - name: Verify exact tools and source identity
         shell: bash
         run: |
@@ -506,16 +515,16 @@ jobs:
     env:
       PIONEER_NODE: ${{ matrix.node }}
       PIONEER_RUNNER: ${{ matrix.runner }}
-      PIONEER_TOOL_RECORD: ${{ runner.temp }}/tools.json
       PIONEER_TRANSFER: ${{ needs.candidate.outputs.transfer }}
       PIONEER_EXTRACTED_IDS: ${{ needs.candidate.outputs.ids }}
-      PIONEER_ARCHIVES: ${{ runner.temp }}/archives
-      PIONEER_EXTRACTED: ${{ runner.temp }}/extracted
       PIONEER_QUALIFICATION: ${{ inputs.qualification }}
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
+      - name: Resolve runner paths
+        shell: bash
+        run: node --input-type=module -e "$PIONEER_PATHS"
       - name: Verify tools
         shell: bash
         run: node --input-type=module -e "$PIONEER_TOOLS"
@@ -665,16 +674,16 @@ jobs:
     env:
       PIONEER_NODE: '24.22.0'
       PIONEER_RUNNER: ubuntu-24.04
-      PIONEER_TOOL_RECORD: ${{ runner.temp }}/tools.json
       PIONEER_TRANSFER: ${{ toJSON(fromJSON(vars.PIONEER_RELEASE_APPROVAL).transfer) }}
       PIONEER_EXTRACTED_IDS: ${{ join(fromJSON(vars.PIONEER_RELEASE_APPROVAL).transfer.artifacts.*.id, ',') }}
-      PIONEER_ARCHIVES: ${{ runner.temp }}/archives
-      PIONEER_EXTRACTED: ${{ runner.temp }}/extracted
       PIONEER_APPROVAL: ${{ vars.PIONEER_RELEASE_APPROVAL }}
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.22.0'
+      - name: Resolve runner paths
+        shell: bash
+        run: node --input-type=module -e "$PIONEER_PATHS"
       - name: Verify publisher tools
         shell: bash
         run: node --input-type=module -e "$PIONEER_TOOLS"
@@ -770,16 +779,16 @@ jobs:
     env:
       PIONEER_NODE: '24.22.0'
       PIONEER_RUNNER: ubuntu-24.04
-      PIONEER_TOOL_RECORD: ${{ runner.temp }}/tools.json
       PIONEER_TRANSFER: ${{ toJSON(fromJSON(vars.PIONEER_REGISTRY_APPROVAL).transfer) }}
       PIONEER_EXTRACTED_IDS: ${{ join(fromJSON(vars.PIONEER_REGISTRY_APPROVAL).transfer.artifacts.*.id, ',') }}
-      PIONEER_ARCHIVES: ${{ runner.temp }}/archives
-      PIONEER_EXTRACTED: ${{ runner.temp }}/extracted
       PIONEER_APPROVAL: ${{ vars.PIONEER_REGISTRY_APPROVAL }}
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.22.0'
+      - name: Resolve runner paths
+        shell: bash
+        run: node --input-type=module -e "$PIONEER_PATHS"
       - name: Verify registry-verification tools
         shell: bash
         run: node --input-type=module -e "$PIONEER_TOOLS"
