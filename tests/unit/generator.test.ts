@@ -349,10 +349,17 @@ test("Buf children use Node or isolated Bun without a shell or dependency instal
 		await fs.cp(join(toolRoot, "dist"), join(packageRoot, "dist"), {
 			recursive: true
 		})
-		await fs.cp(join(toolRoot, "src/runtime"), join(packageRoot, "src/runtime"), {
-			recursive: true
-		})
-		await fs.cp(join(toolRoot, "package.json"), join(packageRoot, "package.json"))
+		await fs.cp(
+			join(toolRoot, "src/runtime"),
+			join(packageRoot, "src/runtime"),
+			{
+				recursive: true
+			}
+		)
+		await fs.cp(
+			join(toolRoot, "package.json"),
+			join(packageRoot, "package.json")
+		)
 		const metadata = JSON.parse(
 			await fs.readFile(join(toolRoot, "package.json"), "utf8")
 		)
@@ -463,13 +470,15 @@ console.log(JSON.stringify({ interpreter: process.execPath, bun: process.version
 			])
 			const provenance = await fs.readFile(join(output, "provenance.json"))
 			const artifacts = JSON.parse(provenance.toString()).artifacts
-			const before = new Map<string, Uint8Array>()
+			const before = new Map<string, Buffer>()
 			for (const path of Object.keys(artifacts))
 				before.set(path, await fs.readFile(join(output, path)))
 			for (const operation of ["build", "generate"]) {
 				await expect(command(operation)).rejects.toMatchObject({
 					code: 1,
-					stderr: expect.stringContaining("@pioneer-synthetic/missing-dependency")
+					stderr: expect.stringContaining(
+						"@pioneer-synthetic/missing-dependency"
+					)
 				})
 				expect(await fs.readFile(join(output, "provenance.json"))).toEqual(
 					provenance

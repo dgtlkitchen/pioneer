@@ -6,48 +6,56 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     name: CI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.0'
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@f4d14e03ff726c06358e5557344e1da148b56cf7
         with:
-          bun-version: latest
+          bun-version: '1.4.3'
 
-      - name: Get bun store directory
-        id: bun-cache-dir
-        run: echo "dir=$(bun pm cache)" >> $GITHUB_OUTPUT
-
-      - name: Cache bun dependencies
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.bun-cache-dir.outputs.dir }}
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Generate code
-        run: bun run generate
-
-      - name: Lint and format check
+      - name: Verify tools and qualify the source without caches or credentials
+        shell: bash
         run: |
-          bun run lint:fix
-          bun run format:check
-
-      - name: Run tests
-        run: bun test
-
-      - name: Build
-        run: bun run build
-
-      - name: Check types
-        run: bun run typecheck
+          set -euo pipefail
+          isolated_home=$(mktemp -d "$RUNNER_TEMP/pioneer-ci.XXXXXX")
+          env -i PATH="$PATH" HOME="$isolated_home" TMPDIR="$RUNNER_TEMP" CI=true bash --noprofile --norc <<'QUALIFY'
+          set -euo pipefail
+          test "$(node --version)" = v24.22.0
+          test "$(bun --version)" = 1.4.3
+          node --input-type=module <<'TOOLS'
+          import { execFileSync } from 'node:child_process';
+          import { realpathSync } from 'node:fs';
+          import { dirname, join } from 'node:path';
+          const npm = execFileSync('which', ['npm'], { encoding: 'utf8', timeout: 10000 }).trim();
+          const bundled = realpathSync(join(dirname(process.execPath), 'npm'));
+          if (realpathSync(npm) !== bundled) throw new Error('Verify npm path: executable differs from the Node distribution');
+          const version = execFileSync(process.execPath, [bundled, '--version'], { encoding: 'utf8', timeout: 10000 }).trim();
+          if (version !== '11.19.1') throw new Error('Verify npm version: expected bundled npm 11.19.1');
+          console.log(JSON.stringify({ node: process.execPath, npm: bundled, npmVersion: version, platform: process.platform, arch: process.arch }));
+          TOOLS
+          command -v bun
+          test -z "$(find . -type f \( -name .env -o -name '.env.*' -o -name .npmrc \) -print -quit)"
+          bun --no-env-file --no-install install --frozen-lockfile --ignore-scripts
+          bun --no-env-file --no-install run lint
+          bun --no-env-file --no-install run typecheck
+          bun --no-env-file --no-install run build
+          bun --no-env-file --no-install run test:unit
+          QUALIFY

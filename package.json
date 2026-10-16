@@ -1,7 +1,7 @@
 {
 	"author": "Marius Modlich <m.modlich@digitalkitchen.io>",
 	"bugs": {
-		"url": "https://github.com/vexxvakan/pioneer/issues"
+		"url": "https://github.com/dgtlkitchen/pioneer/issues"
 	},
 	"config": {
 		"commitizen": {
@@ -9,11 +9,7 @@
 		}
 	},
 	"exports": {
-		"./cosmos/*": {
-			"types": "./dist/types/cosmos/*.d.ts",
-			"import": "./dist/esm/cosmos/*.js",
-			"require": "./dist/cjs/cosmos/*.cjs"
-		}
+		".": { "types": "./dist/types/index.d.ts", "import": "./dist/index.js" }
 	},
 	"dependencies": {
 		"@bufbuild/buf": "1.60.0",
@@ -26,9 +22,13 @@
 		"@noble/hashes": "2.0.1",
 		"@scure/base": "2.0.0",
 		"@scure/bip32": "2.0.1",
-		"@scure/bip39": "2.0.1"
+		"@scure/bip39": "2.0.1",
+		"@tanstack/react-query": "5.102.8",
+		"@types/react": "19.3.0",
+		"react": "19.3.0",
+		"typescript": "5.9.3"
 	},
-	"description": "JS-based standard library for Juno's Protobuffers",
+	"description": "CLI generating typed npm SDK packages from Buf protobuf sources",
 	"devDependencies": {
 		"@biomejs/biome": "2.3.7",
 		"@commitlint/cli": "20.1.0",
@@ -40,49 +40,49 @@
 		"husky": "9.1.7",
 		"lint-staged": "16.2.7",
 		"rimraf": "6.1.2",
-		"rolldown": "1.0.0-beta.51",
-		"typescript": "5.9.3"
+		"rolldown": "1.0.0-beta.51"
 	},
 	"directories": {
 		"lib": "src"
 	},
 	"files": [
 		"dist",
-		"gen"
+		"src/runtime",
+		"npm-shrinkwrap.json"
 	],
-	"homepage": "https://junonetwork.io",
+	"homepage": "https://github.com/dgtlkitchen/pioneer#readme",
 	"keywords": [],
-	"license": "SEE LICENSE IN LICENSE",
-	"name": "@buildonjuno/pioneer",
+	"license": "Apache-2.0",
+	"name": "@vastward/pioneer",
 	"publishConfig": {
 		"access": "public"
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/CosmosContracts/pioneer.git"
+		"url": "https://github.com/dgtlkitchen/pioneer.git"
 	},
 	"scripts": {
-		"clean": "rimraf dist && rimraf gen",
-		"generate": "bun ./scripts/gen.ts",
+		"clean": "rimraf dist",
+		"generate": "bun --no-env-file --no-install ./scripts/gen.ts",
 		"build": "rolldown -c rolldown.config.ts && tsc -p tsconfig.types.json",
-		"test:unit": "bun test tests/unit",
-		"test:integration": "bun test tests/integration",
-		"test:watch": "bun test --watch",
-		"test:coverage": "bun test --coverage",
+		"test:unit": "bun --no-env-file --no-install test tests/unit",
+		"test:watch": "bun --no-env-file --no-install test --watch tests/unit",
+		"test:coverage": "bun --no-env-file --no-install test --coverage tests/unit",
 		"lint": "biome check",
 		"lint:fix": "biome check --fix",
 		"lint:unsafe": "biome check --fix --unsafe",
 		"typecheck": "tsc --noEmit",
-		"buidl": "bun run clean && bun run generate && bun run lint:unsafe && bun run build",
-		"prepare": "mise install && husky"
+		"test": "bun --no-env-file --no-install test tests/unit"
 	},
 	"trustedDependencies": [
 		"@biomejs/biome",
 		"@bufbuild/buf"
 	],
-	"version": "1.0.0",
+	"version": "0.0.1",
 	"type": "module",
+	"bin": { "pioneer": "./dist/cli.js" },
 	"engines": {
+		"node": ">=20.19.0",
 		"bun": ">=1.3.0"
 	}
 }

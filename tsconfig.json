@@ -29,6 +29,6 @@
 		"useDefineForClassFields": true,
 		"types": ["bun-types", "node"]
 	},
-	"include": ["src/**/*", "gen/**/*", "tests/**/*", "scripts/**/*"],
+	"include": ["src/index.ts", "src/paths.ts", "src/generator/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "rolldown.config.ts"],
 	"exclude": ["node_modules", "dist"]
 }

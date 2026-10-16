@@ -1,370 +1,228 @@
-# Pioneer - TypeScript SDK for Cosmos SDK Blockchains
+# Pioneer
 
-[![CI](https://github.com/buildonjuno/pioneer/actions/workflows/ci.yml/badge.svg)](https://github.com/buildonjuno/pioneer/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/@buildonjuno/pioneer.svg)](https://www.npmjs.com/package/@buildonjuno/pioneer)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+**A CLI that turns protobuf sources into a typed npm SDK package.** Pioneer is
+the generator—not the generated chain SDK and not a wallet application.
 
-Pioneer is a TypeScript library for interacting with Cosmos SDK-based blockchains, with a primary focus on Juno Network. It provides auto-generated TypeScript/JavaScript clients from Protocol Buffer definitions, enabling seamless blockchain interaction through multiple transport protocols.
-
-## Features
-
-- **Auto-generated TypeScript Clients**: Automatically generates TypeScript code from Cosmos SDK protobuf definitions
-- **Multiple Transport Protocols**: Support for gRPC, gRPC-Web, REST, and Tendermint RPC
-- **Type Safety**: Full TypeScript support with strict typing
-- **Modern Tooling**: Built with Bun and Rolldown for fast builds and optimal performance
-- **Comprehensive Module Support**: Covers all standard Cosmos SDK modules plus Juno-specific modules
-- **Developer Friendly**: Simple API with clear examples and comprehensive documentation
-
-## Installation
-
-```bash
-npm install @buildonjuno/pioneer
-# or
-yarn add @buildonjuno/pioneer
-# or
-pnpm add @buildonjuno/pioneer
-# or
-bun add @buildonjuno/pioneer
+```sh
+pioneer --input-path ./proto --output-path ./codegen/ \
+  --package-name @example/sdk --package-version 0.1.0
 ```
 
-## Quick Start
+The input is a local directory/Buf source root. Buf discovers its owning
+configuration and lockfile, including declared imports. No running node,
+reflection service, mnemonic or environment file is required. The output is a
+dedicated generated package directory, with compiled ESM JavaScript,
+declarations, exports, pinned runtime dependencies and provenance.
 
-### Basic Query Example
+## Installed CLI
 
-```typescript
-import { createBankQueryClient } from "@buildonjuno/pioneer/grpc/cosmos/bank/v1beta1/Query";
+The selected CLI identity is `@vastward/pioneer@0.0.1` from
+`https://github.com/dgtlkitchen/pioneer`. The CLI and generated `@vastward/sdk`
+are distinct packages. This source candidate does not establish publication or
+installed-package acceptance.
 
-// Create a bank query client
-const bankClient = createBankQueryClient({
-  baseUrl: "https://grpc.junotest.basementnodes.ca/"
-});
+After separate release and installation approval, the pinned global installation
+command is:
 
-// Query balance
-const balance = await bankClient.balance({
-  address: "juno1...",
-  denom: "ujuno"
-});
-
-console.log("Balance:", balance.balance?.amount);
+```sh
+npm install --global --ignore-scripts --registry=https://registry.npmjs.org @vastward/pioneer@0.0.1
+pioneer --version
+pioneer --help
 ```
 
-### Transaction Example
+These commands describe future authorized operations, not completed installation.
+The selected release requires Node `>=20.19.0` and independent cold-install
+qualification on macOS ARM64, Linux x64, and Windows x64.
+`pioneer --version` reads the installed package's name and version.
+Version output identifies metadata, not registry integrity or source authenticity.
+Release acceptance must separately verify the exact tarball, dependencies,
+checksums, and producer provenance.
 
-```typescript
-import { create } from "@bufbuild/protobuf";
-import { MsgSendSchema } from "@buildonjuno/pioneer/common/cosmos/bank/v1beta1/tx_pb";
-import { createEthermintSigner } from "@buildonjuno/pioneer";
+Production generation invokes the installed `pioneer` executable, as in the first
+example. The installed package supplies its compiled CLI, generator chunks,
+declarations, and `src/runtime` templates. Production generation must not require
+a sibling Pioneer checkout, sibling `dist/cli.js`, or cached producer output.
+Schema roots remain explicit inputs. Generated `provenance.json` records input
+and artifact hashes but does not establish trusted schema ownership or release
+authorization. Package closure and cold installation remain unverified.
 
-const signer = createEthermintSigner({
-  mnemonic: "your twelve word mnemonic...",
-  rpcEndpoint: "https://rpc.junotest.basementnodes.ca/",
-  restEndpoint: "https://api.junotest.basementnodes.ca/",
-  prefix: "juno",
-  chainId: "juno-testnet-1"
-});
+## This workspace
 
-// Create send message
-const msgSend = create(MsgSendSchema, {
-  fromAddress: await signer.getAddress(),
-  toAddress: "juno1...",
-  amount: [{
-    denom: "ujuno",
-    amount: "1000000" // 1 JUNO
-  }]
-});
+| Repository | Responsibility |
+| --- | --- |
+| `pioneer` | Generic generator CLI |
+| `neorome-core` + local `cosmos-sdk` | Actual protobuf contracts |
+| `neorome-ts` | Generated package **`@neorome/sdk`** |
+| `passkeys-demo` | Existing React Router/TanStack application consuming the SDK |
 
-// Sign and broadcast
-const result = await signer.signAndBroadcast(
-  [{
-    typeUrl: "/cosmos.bank.v1beta1.MsgSend",
-    schema: MsgSendSchema,
-    value: msgSend
-  }],
-  {
-    feeDenom: "ujuno",
-    feeAmount: "5000",
-    gasLimit: "200000",
-    mode: "BROADCAST_MODE_SYNC"
-  }
-);
+The following example is for source development only, not production generation.
+From `neorome-core`, the example invokes the built local CLI:
 
-console.log("TX Hash:", result?.tx_response?.txhash);
+```sh
+node ../pioneer/dist/cli.js \
+  --input-path ./proto \
+  --dependency-path ../cosmos-sdk/proto \
+  --output-path ../neorome-ts \
+  --package-name @neorome/sdk \
+  --ignore-path cosmos/base/reflection --react \
+  --package-version 0.1.0
 ```
 
-## Usage Examples
+`--dependency-path` is repeatable. Later explicit sources override same-named
+descriptor files, so the local SDK can replace the BSR SDK descriptors imported
+by core. Do not mix incompatible sources; descriptor linking and strict generated
+TypeScript compilation must succeed before replacement. Current Neorome type
+URLs still use **`coolcat.*`**: client-only renaming would break the protocol.
 
-### 1. gRPC Client Usage
+`passkeys-demo/packages/verdant-web/package.json` uses
+`"@neorome/sdk": "file:../../../neorome-ts"`. Generated output does not install its
+own dependencies. Refresh the consumer's local file dependency after regeneration
+using a reviewed, frozen install; do not accept unrelated version changes.
 
-Pioneer generates strongly-typed gRPC clients for all Cosmos SDK modules:
+## Generated API
 
-```typescript
-import { 
-  createBankQueryClient,
-  createStakingQueryClient,
-  createDistributionQueryClient 
-} from "@buildonjuno/pioneer/grpc";
+Canonical proto paths become package subpaths. `_pb` modules export Protobuf-ES
+messages, schemas, enums and service descriptors. `_client` modules are emitted
+only where an implemented transport applies:
 
-// Bank queries
-const bankClient = createBankQueryClient({ baseUrl: "https://grpc.juno.network" });
-const balances = await bankClient.allBalances({ address: "juno1..." });
+```ts
+import { createQueryRpcClient as bankClient } from "@neorome/sdk/cosmos/bank/v1beta1/query_client"
+import { createQueryRpcClient as accountClient } from "@neorome/sdk/coolcat/accounts/v1/query_client"
+import { messages } from "@neorome/sdk/cosmos/bank/v1beta1/tx_client"
 
-// Staking queries
-const stakingClient = createStakingQueryClient({ baseUrl: "https://grpc.juno.network" });
-const validators = await stakingClient.validators({ status: "BOND_STATUS_BONDED" });
-
-// Distribution queries
-const distClient = createDistributionQueryClient({ baseUrl: "https://grpc.juno.network" });
-const rewards = await distClient.delegationTotalRewards({ delegatorAddress: "juno1..." });
+const bank = bankClient({ baseUrl: "https://rpc.vexx.sh" })
+const accounts = accountClient({ baseUrl: "https://rpc.vexx.sh" })
+const balance = await bank.balance({ address, denom: "urome" }, { signal })
+const account = await accounts.accountNumber({ address }, { signal })
+// account.number is bigint; Coin.amount remains an exact decimal string.
+const send = messages.send({
+  fromAddress: address, toAddress: recipient,
+  amount: [{ denom: "urome", amount: "1000000" }]
+})
 ```
 
-### 2. Transaction Service Client
+- REST uses actual unary `google.api.http` bindings, schema-based protobuf JSON,
+  dotted query parameters and encoded URI variables. One canonical HTTP binding
+  is emitted per method; additional bindings are alternative URLs, not duplicate
+  JavaScript methods. Streaming methods remain service descriptors.
+- On Cosmos inputs, module `Query` services also receive typed ABCI-over-RPC
+  clients. **Account queries currently have no REST annotations.** Tx service,
+  reflection and node-info methods are not invented as ABCI routes.
+- Cosmos `Msg` service helpers return typed protobuf `Any` values, not unsigned
+  writes. The global registry supports application and well-known `Any` payloads.
+- HTTP errors, malformed protobuf JSON and oversized responses reject. Requests
+  default to 15 seconds/4 MiB, accept cancellation, omit cookies and reject
+  redirects. Override limits explicitly when appropriate.
+- Generated runtimes have **two exact dependencies**: Protobuf-ES2.10.1
+  (Apache-2.0 AND BSD-3-Clause) and scure/base2.0.0 (MIT), with no runtime
+  transitives at those versions. Node generator/transport dependencies do not
+  enter the browser SDK.
 
-```typescript
-import { createTxServiceClient } from "@buildonjuno/pioneer/grpc/cosmos/tx/v1beta1/Service";
-import { SimulateRequestSchema } from "@buildonjuno/pioneer/common/cosmos/tx/v1beta1/service_pb";
+## Transactions and TanStack Query
 
-const txClient = createTxServiceClient({
-  baseUrl: "https://grpc.juno.network"
-});
+Each package exports `operations.json`: one entry per emitted service/method,
+including request/response type names, actual factory/symbol and transport.
+Metadata records actual HTTP bindings and the alternate `rpcFactory` for Cosmos
+module queries. SDK React hooks prefer ABCI for those queries. Schema-only
+messages are not invented endpoints.
 
-// Simulate transaction before broadcasting
-const simulateResponse = await txClient.simulate({
-  txBytes: signedTxBytes
-});
+`--react` emits an opt-in SDK React surface, with optional React/TanStack peers;
+the core SDK entry never imports it. `--ignore-path` is a repeatable namespace
+exclusion list. The Neorome command above excludes `cosmos/base/reflection`,
+emitting **224 descriptors and 329 hooks: 189 queries / 140 mutations / 33 modules**.
+Query-only modules are flat (`@neorome/sdk/react/epochs/use-current-epoch`);
+mixed modules use `react/bank/query/use-balance` and `react/bank/tx/use-send`.
+There are no empty generated query/tx directories. `react/hooks.json` maps every
+operation/export/path. Version suffixes resolve actual collisions. The frontend
+no longer generates or stores these modules; see its `src/hooks/README.md`.
 
-console.log("Gas used:", simulateResponse.gasInfo?.gasUsed);
+The existing app is RPC-only at `https://rpc.vexx.sh`, expected chain `nero-1`.
+REST-only hooks fail explicitly without REST configuration. Cosmos SDK output
+also supplies `createCometClient` for native `status`, `broadcast_tx_sync` and `tx`
+JSON-RPC. Exact transaction-not-found differs from disabled indexing or transport
+failure; status is checked on the same RPC before preparation/submission. No
+endpoint was contacted or configured remotely by generation.
 
-// Broadcast transaction
-const broadcastResponse = await txClient.broadcastTx({
-  txBytes: signedTxBytes,
-  mode: "BROADCAST_MODE_SYNC"
-});
+When the input contains Cosmos transaction schemas, root exports include
+`createDirectSignDoc` and `assembleTransaction`. Supply the real chain ID,
+smart-account number/sequence, messages, signer public key where required,
+integer fees/gas and timeout height. Helpers snapshot exact protobuf bytes; they
+do not guess identity/fees, acquire credentials, verify signatures or grant
+authorization. The old Ethermint mnemonic/Keccak signer is no longer the signing
+path. Neorome's WebAuthn challenge and CCPK envelope belong to the consuming app.
+
+The combined `useChain.ts` layer was replaced with individual hooks and colocated
+options. Queries return full SDK types and cache JSON-safe protobuf bytes for SSR,
+preserving Any URLs and unknown fields. Keys include network, endpoints, operation
+and request; reads propagate cancellation. Mutations require explicit submission,
+never automatically retry or resume offline, and return actual submission receipts
+rather than fabricated per-message execution responses. Reviewed transfer
+preparation and bounded confirmation also have individual module hook files.
+
+`submitted` means CheckTx acceptance, not execution. Network loss during broadcast
+is **uncertain**: query the locally computed transaction hash before retrying.
+Confirmation requires an included response with execution code zero; included
+failures still invalidate balances/sequence because fees may have been spent.
+These hooks are not yet connected to the prototype's native-auth UI. They do not
+make fake localStorage accounts or SQL faucet/transfers chain-backed.
+
+## Tool development and verification
+
+Use the existing pinned `bun.lock`, with reviewed installation and lifecycle
+scripts disabled. **Bun1.4.0 package-manager commands loaded `.env` despite
+`--no-env-file` during inspection. Install only from an environment-file-free
+checkout; do not assume that flag protects package-manager operations.** The
+automatic `mise install` prepare hook and unsafe build shortcut were removed.
+The owner subsequently confirmed the local Pioneer environment file has no
+secrets; inspection showed public endpoints and empty credentials. Its live-test
+flag is not authorization to submit transactions. Approved React compilation
+dependencies were installed with exact pins and lifecycle scripts disabled.
+Existing advisory findings remain deployment gates. The app uses stable
+TypeScript 7.0.2/tsc; Pioneer retains TypeScript 5.9.3's stable compiler API,
+which is separate from the removed frontend preview compiler.
+
+With dependencies installed:
+
+```sh
+npm run build
+npm run typecheck
+npm run test:unit
 ```
 
-### 3. Working with Juno-specific Modules
+The build produces `dist/cli.js` (the `pioneer` bin), programmatic generator API
+and its declarations. It replaces only the tool's generated `dist` output.
+Generic offline fixtures test generation, compiled imports, regeneration and
+failure preservation. Every output package is separately checked with strict
+TypeScript and **without** `skipLibCheck` before JS/declaration emission.
+Neorome-specific SDK/transaction/TanStack tests live in the app's
+`packages/verdant-web/tests`; they use mocked transports, not a live mnemonic.
 
-```typescript
-import { createJunoFeepayQueryClient } from "@buildonjuno/pioneer/grpc/juno/feepay/v1/Query";
-import { createJunoMintQueryClient } from "@buildonjuno/pioneer/grpc/juno/mint/v1/Query";
+Generation stages its result outside the repository and retains the previous SDK
+if generation/compilation fails. Replacement has a backup/rollback step; it is not
+an atomic swap for concurrent readers. Run one generator per output, with consumers
+stopped. Modified/unmanaged output, Git metadata, installed dependencies and an
+interrupted `.previous` backup are rejected rather than silently deleted. Finder's
+`.DS_Store` metadata is preserved but excluded from package artifacts. Keep
+handwritten code elsewhere. `provenance.json` records descriptor and artifact
+SHA-256 hashes; this is reproducibility evidence, not a trusted-chain proof.
 
-// Feepay module
-const feepayClient = createJunoFeepayQueryClient({ baseUrl: "https://grpc.juno.network" });
-const feePayContracts = await feepayClient.feePayContracts({});
+## Publication and remaining application work
 
-// Mint module
-const mintClient = createJunoMintQueryClient({ baseUrl: "https://grpc.juno.network" });
-const inflationParams = await mintClient.inflationParams({});
-```
+The output has npm package layout, **not publication authorization**. Pioneer
+declares the selected Apache-2.0 license with the complete text in `LICENSE`.
+The existing author attribution remains in `package.json`. Source attribution
+and distribution-rights review remain release gates, not conclusions from the
+license selection. Generic generated packages still default to `UNLICENSED`.
+The CLI license does not change input-schema licenses or generated-package rights.
+The selected `@vastward/sdk` license requires its separate metadata approval.
 
-### 4. Error Handling
+`bun.lock` still records the inherited workspace name. The source-only identity
+change does not authorize lockfile regeneration or dependency resolution.
+Frozen-lock installation qualification remains open. Packaging, security review,
+installation, and publication require their separate approval windows.
 
-```typescript
-try {
-  const result = await bankClient.balance({
-    address: "juno1...",
-    denom: "ujuno"
-  });
-} catch (error) {
-  if (error.code === "NOT_FOUND") {
-    console.error("Account not found");
-  } else if (error.code === "UNAVAILABLE") {
-    console.error("gRPC endpoint unavailable");
-  } else {
-    console.error("Unknown error:", error);
-  }
-}
-```
-
-## API Overview
-
-### Client Types
-
-1. **gRPC Clients** (`/grpc`): Direct gRPC communication with blockchain nodes
-2. **gRPC-Web Clients** (`/grpc-web`): Browser-compatible gRPC clients (coming soon)
-3. **REST Clients** (`/rest`): RESTful API clients (coming soon)
-4. **Tendermint RPC** (`/rpc`): Tendermint consensus layer interaction (coming soon)
-
-### Supported Modules
-
-#### Cosmos SDK Standard Modules
-- `auth` - Account authentication and authorization
-- `authz` - Authorization grants
-- `bank` - Token transfers and balance queries
-- `circuit` - Circuit breaker for halting modules
-- `consensus` - Consensus parameter updates
-- `crisis` - Invariant checking
-- `distribution` - Staking rewards distribution
-- `evidence` - Evidence handling for misbehavior
-- `feegrant` - Fee allowance grants
-- `gov` - On-chain governance
-- `group` - Group accounts and policies
-- `mint` - Token minting and inflation
-- `nft` - Non-fungible tokens
-- `params` - Parameter management (deprecated)
-- `slashing` - Validator slashing
-- `staking` - Proof-of-stake staking
-- `tx` - Transaction service
-- `upgrade` - Software upgrade handling
-- `vesting` - Token vesting accounts
-
-#### Juno-specific Modules
-- `clock` - On-chain cron jobs
-- `cwhooks` - CosmWasm contract hooks
-- `drip` - Token distribution/dripping
-- `feepay` - Fee payment abstractions
-- `feeshare` - Fee sharing mechanism
-- `mint` - Custom Juno minting logic
-
-#### Additional Modules
-- `gaia/globalfee` - Global minimum fee for Cosmos Hub
-- `osmosis/tokenfactory` - Token factory for creating new tokens
-
-## Development
-
-### Prerequisites
-
-- Bun >= 1.0.0
-- Node.js >= 18 (for some tooling compatibility)
-
-### Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/CosmosContracts/pioneer.git
-cd pioneer
-
-# Install dependencies
-bun install
-
-# Generate TypeScript code from protos
-bun run generate
-
-# Build the project
-bun run build
-
-# Run tests
-bun test
-```
-
-### Project Structure
-
-```
-pioneer/
-├── proto/           # Source protobuf definitions
-├── generated/       # Auto-generated TypeScript code
-│   ├── common/      # Protobuf message types
-│   ├── grpc/        # gRPC client factories
-│   ├── grpc-web/    # gRPC-Web clients (placeholder)
-│   ├── rest/        # REST clients (placeholder)
-│   └── rpc/         # Tendermint RPC (placeholder)
-├── src/             # Source code
-│   ├── generator.ts # Code generation logic
-│   └── types/       # TypeScript type definitions
-├── scripts/         # Development scripts
-├── examples/        # Usage examples
-└── tests/           # Test suites
-```
-
-### Code Generation
-
-Pioneer uses Buf to manage protobuf dependencies and generate TypeScript code:
-
-```bash
-# Regenerate all TypeScript code
-bun run generate
-
-# Test the generator
-bun run test-gen
-
-# Test gRPC functionality
-bun run test-grpc
-```
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Commit Convention
-
-We use [Conventional Commits](https://www.conventionalcommits.org/):
-- `feat:` New features
-- `fix:` Bug fixes
-- `docs:` Documentation changes
-- `test:` Test additions or updates
-- `refactor:` Code refactoring
-- `chore:` Maintenance tasks
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"Cannot find module" errors**
-   - Ensure you've run `bun run generate` before building
-   - Check that all dependencies are installed with `bun install`
-
-2. **gRPC connection errors**
-   - Verify the gRPC endpoint URL is correct and accessible
-   - Check if the endpoint requires TLS/SSL
-   - Ensure your network allows gRPC connections (port 443 for HTTPS)
-
-3. **Transaction broadcasting failures**
-   - Verify account has sufficient balance for fees
-   - Check sequence number is correct (use auth module to query)
-   - Ensure chain ID matches the network
-
-4. **Build errors**
-   - Make sure you're using Bun >= 1.0.0
-   - Try clearing the build cache: `bun run clean && bun run build`
-
-### Debug Mode
-
-Enable detailed logging:
-
-```typescript
-// Set debug mode for Connect-RPC
-import { createPromiseClient } from "@connectrpc/connect";
-
-const client = createPromiseClient(service, transport, {
-  // Enable debug logging
-  interceptors: [(next) => async (req) => {
-    console.log("Request:", req);
-    const res = await next(req);
-    console.log("Response:", res);
-    return res;
-  }]
-});
-```
-
-## Resources
-
-- [Juno Network Documentation](https://docs.junonetwork.io)
-- [Cosmos SDK Documentation](https://docs.cosmos.network)
-- [Buf Documentation](https://buf.build/docs)
-- [Connect-RPC Documentation](https://connectrpc.com/docs)
-- [Example Applications](./examples)
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-Built with ❤️ by the Juno Network community.
-
-Special thanks to:
-- The Cosmos SDK team for the amazing blockchain framework
-- The Buf team for excellent protobuf tooling
-- The Connect-RPC team for modern gRPC support
-- All contributors who help make Pioneer better
-
----
-
-For more examples and detailed documentation, visit our [documentation site](https://docs.junonetwork.io) or check out the [examples](./examples) directory.
+Generating current schemas does not implement planned registry/proof, native
+origin/signature hardening, recovery, session or testnet-faucet contracts. Native
+provider verification and real registration/transfer execution remain separate
+acceptance work. No mainnet/testnet node or original Verdant database is needed
+for code generation or these offline SDK tests.

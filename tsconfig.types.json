@@ -6,8 +6,8 @@
 		"declarationMap": false,
 		"declarationDir": "./dist/types",
 		"outDir": "./dist/types",
-		"rootDir": "gen"
+		"rootDir": "src"
 	},
-	"include": ["gen/**/*.ts"],
-	"exclude": ["src/generator/**/*", "dist", "node_modules"]
+	"include": ["src/index.ts", "src/paths.ts", "src/generator/**/*.ts"],
+	"exclude": ["dist", "node_modules"]
 }
