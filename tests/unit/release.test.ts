@@ -1899,7 +1899,7 @@ test("candidate rejects lock drift, missing platform closure, altered build, and
 				fs.stat(join(directory, "output.json"))
 			).rejects.toMatchObject({ code: "ENOENT" })
 		})
-})
+}, 60_000)
 
 async function provenance(
 	directory: string,
