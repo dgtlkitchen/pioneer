@@ -1120,10 +1120,10 @@ syncBuiltinESMExports();
 			for (const { name, version, commands } of [
 				{
 					name: "@bufbuild/buf",
-					version: "1.60.0",
+					version: "1.74.0",
 					commands: ["buf", "protoc-gen-buf-breaking", "protoc-gen-buf-lint"]
 				},
-				{ name: "typescript", version: "5.9.3", commands: ["tsc", "tsserver"] }
+				{ name: "typescript", version: "6.0.3", commands: ["tsc", "tsserver"] }
 			]) {
 				const bin: Record<string, string> = Object.fromEntries(
 					commands.map((command) => [command, `bin/${command}`])
@@ -1569,13 +1569,13 @@ async function candidate(directory: string) {
 	const staging = join(directory, "staging")
 	await Promise.all([source, build, staging].map((path) => fs.mkdir(path)))
 	const dependencies = {
-		"@bufbuild/buf": "1.60.0",
-		"@bufbuild/protoc-gen-es": "2.10.1"
+		"@bufbuild/buf": "1.74.0",
+		"@bufbuild/protoc-gen-es": "2.16.0"
 	}
 	const optionalDependencies = Object.fromEntries(
 		["darwin-arm64", "linux-x64", "win32-x64"].map((platform) => [
 			`@bufbuild/buf-${platform}`,
-			"1.60.0"
+			"1.74.0"
 		])
 	)
 	const integrity = `sha512-${Buffer.alloc(64).toString("base64")}`
@@ -1583,27 +1583,27 @@ async function candidate(directory: string) {
 	const npmPackages: Record<string, unknown> = { "": { dependencies } }
 	for (const name of ["@bufbuild/buf", ...Object.keys(optionalDependencies)]) {
 		const metadata = name === "@bufbuild/buf" ? { optionalDependencies } : {}
-		bunPackages[name] = [`${name}@1.60.0`, "", metadata, integrity]
+		bunPackages[name] = [`${name}@1.74.0`, "", metadata, integrity]
 		const path = `node_modules/${name}`
-		const resolved = `https://registry.npmjs.org/${name}/-/${name.split("/").at(-1)}-1.60.0.tgz`
-		npmPackages[path] = { version: "1.60.0", resolved, integrity, ...metadata }
+		const resolved = `https://registry.npmjs.org/${name}/-/${name.split("/").at(-1)}-1.74.0.tgz`
+		npmPackages[path] = { version: "1.74.0", resolved, integrity, ...metadata }
 	}
 	for (const name of ["@bufbuild/protoc-gen-es", "@bufbuild/protobuf"]) {
 		const metadata =
 			name === "@bufbuild/protoc-gen-es"
-				? { dependencies: { "@bufbuild/protobuf": "2.10.1" } }
+				? { dependencies: { "@bufbuild/protobuf": "2.16.0" } }
 				: {}
-		bunPackages[name] = [`${name}@2.10.1`, "", metadata, integrity]
+		bunPackages[name] = [`${name}@2.16.0`, "", metadata, integrity]
 		const peers =
 			name === "@bufbuild/protoc-gen-es"
 				? {
-						peerDependencies: { "@bufbuild/protobuf": "2.10.1" },
+						peerDependencies: { "@bufbuild/protobuf": "2.16.0" },
 						peerDependenciesMeta: { "@bufbuild/protobuf": { optional: true } }
 					}
 				: {}
 		npmPackages[`node_modules/${name}`] = {
-			version: "2.10.1",
-			resolved: `https://registry.npmjs.org/${name}/-/${name.split("/").at(-1)}-2.10.1.tgz`,
+			version: "2.16.0",
+			resolved: `https://registry.npmjs.org/${name}/-/${name.split("/").at(-1)}-2.16.0.tgz`,
 			integrity,
 			...metadata,
 			...peers

@@ -379,7 +379,7 @@ async function check(config) {
 	)
 	assert.equal(
 		provenance.generator,
-		"protoc-gen-es@2.10.1",
+		"protoc-gen-es@2.16.0",
 		"Check generated provenance: wrong generator"
 	)
 	assert.match(provenance.descriptorSha256, /^[a-f0-9]{64}$/)

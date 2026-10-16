@@ -19,8 +19,28 @@ function code(value: unknown): number {
 	return value
 }
 
+export type CometTransaction = {
+	hash: string
+	height: bigint
+	code: number
+	codespace: string | undefined
+	log: string | undefined
+	data: string | null | undefined
+}
+export type CometClient = {
+	status(options?: CallOptions): Promise<{ chainId: string }>
+	broadcastSync(
+		bytes: Uint8Array,
+		options?: CallOptions
+	): Promise<{ hash: string; code: number }>
+	transaction(
+		transactionHash: string,
+		options?: CallOptions
+	): Promise<CometTransaction | undefined>
+}
+
 /** Native Comet JSON-RPC operations; these are not fabricated protobuf/ABCI services. */
-export function createCometClient(config: RestClientConfig) {
+export function createCometClient(config: RestClientConfig): CometClient {
 	const request = createRpcRequest(config)
 	return {
 		async status(options?: CallOptions) {

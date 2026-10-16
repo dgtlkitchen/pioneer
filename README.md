@@ -113,8 +113,8 @@ const send = messages.send({
 - HTTP errors, malformed protobuf JSON and oversized responses reject. Requests
   default to 15 seconds/4 MiB, accept cancellation, omit cookies and reject
   redirects. Override limits explicitly when appropriate.
-- Generated runtimes have **two exact dependencies**: Protobuf-ES2.10.1
-  (Apache-2.0 AND BSD-3-Clause) and scure/base2.0.0 (MIT), with no runtime
+- Generated runtimes have **two exact dependencies**: Protobuf-ES 2.16.0
+  (Apache-2.0 AND BSD-3-Clause) and scure/base 2.4.0 (MIT), with no runtime
   transitives at those versions. Node generator/transport dependencies do not
   enter the browser SDK.
 
@@ -177,9 +177,9 @@ The owner subsequently confirmed the local Pioneer environment file has no
 secrets; inspection showed public endpoints and empty credentials. Its live-test
 flag is not authorization to submit transactions. Approved React compilation
 dependencies were installed with exact pins and lifecycle scripts disabled.
-Existing advisory findings remain deployment gates. The app uses stable
-TypeScript 7.0.2/tsc; Pioneer retains TypeScript 5.9.3's stable compiler API,
-which is separate from the removed frontend preview compiler.
+Existing advisory findings remain deployment gates. The app uses the TypeScript
+7.0.2 native compiler. Pioneer uses the TypeScript 6.0.3 API because TypeScript 7
+does not provide the programmatic compiler API required by its generator.
 
 With dependencies installed:
 
@@ -192,19 +192,48 @@ npm run test:unit
 The build produces `dist/cli.js` (the `pioneer` bin), programmatic generator API
 and its declarations. It replaces only the tool's generated `dist` output.
 Generic offline fixtures test generation, compiled imports, regeneration and
-failure preservation. Every output package is separately checked with strict
-TypeScript and **without** `skipLibCheck` before JS/declaration emission.
+failure preservation. Every output package is checked with strict TypeScript and
+**without** `skipLibCheck` before anything is written: all emitted declarations,
+plus Pioneer-authored client, hook and runtime source bodies. Sources link schemas
+through the same `_pb` declarations consumers receive.
 Neorome-specific SDK/transaction/TanStack tests live in the app's
 `packages/verdant-web/tests`; they use mocked transports, not a live mnemonic.
 
-Generation stages its result outside the repository and retains the previous SDK
-if generation/compilation fails. Replacement has a backup/rollback step; it is not
-an atomic swap for concurrent readers. Run one generator per output, with consumers
-stopped. Modified/unmanaged output, Git metadata, installed dependencies and an
-interrupted `.previous` backup are rejected rather than silently deleted. Finder's
+Generation and checking run in memory, so a failure leaves the output untouched.
+The output is then updated in place: stale files are removed, only changed files
+are written, and `provenance.json` is written last. There is no backup copy; keep
+the output under version control. Existing files are not read back: the hashes
+in `provenance.json` are trusted, so hand edits to generated files survive until
+their generated content changes; review them with Git. Deleted artifacts are
+written again. Rerunning usually repairs an interrupted update; if it had already
+added files, the next run refuses them as unmanaged, so restore the output from
+Git. Run one generator per output, with consumers stopped. Unmanaged files and
+directories, Git metadata and installed dependencies are rejected rather than
+silently deleted or published. Finder's
 `.DS_Store` metadata is preserved but excluded from package artifacts. Keep
 handwritten code elsewhere. `provenance.json` records descriptor and artifact
 SHA-256 hashes; this is reproducibility evidence, not a trusted-chain proof.
+
+### Generation pipeline
+
+1. `buf build` compiles each source root to a descriptor set (in parallel).
+2. protoc-gen-es runs in-process, with the requests Buf's per-directory strategy
+   would send: source-retention options stripped, well-known types imported
+   from `@bufbuild/protobuf/wkt` outside their own directory. Its output is
+   byte-identical to `buf generate`.
+3. Clients, registry and hooks are generated in memory.
+4. oxc (via the pinned `rolldown` dependency) emits ES2022 JavaScript and
+   isolated declarations per file, so generated templates carry explicit types.
+5. The strict check runs over an in-memory compiler host.
+6. Only changed files are written into the output, then `provenance.json`.
+
+`provenance.json` also records `inputSha256`: descriptors, sources, package
+options, generator code, runtime templates and toolchain versions. When the
+output already has that value and no recorded artifact is missing, regeneration
+is a no-op and nothing is rewritten. A successful strict check is cached by the exact checked
+content and toolchain in `$XDG_CACHE_HOME/pioneer` (macOS
+`~/Library/Caches/pioneer`, Windows `%LOCALAPPDATA%\pioneer`). Set
+`PIONEER_CACHE_DIR` to relocate it, or to an empty string to always re-check.
 
 ## Publication and remaining application work
 

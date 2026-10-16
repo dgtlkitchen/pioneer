@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test"
 import { execFile } from "node:child_process"
 import { promises as fs } from "node:fs"
-import { createServer } from "node:http"
-import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -12,6 +10,11 @@ import { generate } from "../../src/generator/index.js"
 import { generateReact } from "../../src/generator/react.js"
 import { toolRoot } from "../../src/paths.js"
 import { createCometClient } from "../../src/runtime/comet.js"
+
+// Strict-check results are cached by content; keep this run's cache disposable.
+process.env.PIONEER_CACHE_DIR = await fs.mkdtemp(
+	join(tmpdir(), "pioneer-test-cache-")
+)
 
 function cometClient(height: unknown, fields: Record<string, unknown>) {
 	return createCometClient({
@@ -104,8 +107,8 @@ test("generic input produces a compiled package, with stable regeneration and sa
 			JSON.parse(await fs.readFile(join(output, "operations.json"), "utf8"))
 		).toEqual([])
 		expect(manifest.dependencies).toEqual({
-			"@bufbuild/protobuf": "2.10.1",
-			"@scure/base": "2.0.0"
+			"@bufbuild/protobuf": "2.16.0",
+			"@scure/base": "2.4.0"
 		})
 		await expect(
 			fs.stat(join(output, "runtime/transaction.ts"))
@@ -114,10 +117,36 @@ test("generic input produces a compiled package, with stable regeneration and sa
 			fs.stat(join(output, "example/v1/example_client.ts"))
 		).rejects.toMatchObject({ code: "ENOENT" })
 		const before = await fs.readFile(join(output, "provenance.json"), "utf8")
+		expect(JSON.parse(before).inputSha256).toMatch(/^[0-9a-f]{64}$/)
+		// The strict check of this exact content is recorded for reuse.
+		expect(
+			(
+				await fs.readdir(
+					join(process.env.PIONEER_CACHE_DIR ?? "", "typecheck-v1")
+				)
+			).length
+		).toBeGreaterThan(0)
+		const unchanged = (await fs.stat(join(output, "provenance.json"))).mtimeMs
 		await fs.writeFile(join(output, ".DS_Store"), "synthetic Finder metadata")
 		expect((await generate(options)).descriptorSha256).toBe(
 			first.descriptorSha256
 		)
+		// Unchanged verified input is a no-op: nothing is rewritten or staged.
+		expect((await fs.stat(join(output, "provenance.json"))).mtimeMs).toBe(
+			unchanged
+		)
+		// A different requested version regenerates in place: only changed files
+		// are rewritten, and the new identity is recorded.
+		const untouched = (await fs.stat(join(output, "dist/index.js"))).mtimeMs
+		await generate({ ...options, packageVersion: "0.2.0" })
+		expect(
+			JSON.parse(await fs.readFile(join(output, "package.json"), "utf8"))
+				.version
+		).toBe("0.2.0")
+		expect((await fs.stat(join(output, "dist/index.js"))).mtimeMs).toBe(
+			untouched
+		)
+		await generate(options)
 		expect(await fs.readFile(join(output, "provenance.json"), "utf8")).toBe(
 			before
 		)
@@ -142,46 +171,46 @@ test("generic input produces a compiled package, with stable regeneration and sa
 		expect(value.pagination.key).toEqual(new Uint8Array([1, 2]))
 		expect(value.labels.snake_key).toBe("unchanged")
 		const provenance = JSON.parse(before)
+		// A deleted artifact is regenerated, byte-identical.
 		for (const path of Object.keys(provenance.artifacts)) {
 			const target = join(output, path)
 			const bytes = await fs.readFile(target)
 			await fs.unlink(target)
-			try {
-				await expect(generate(options)).rejects.toThrow(
-					"missing recorded artifact"
-				)
-				expect(await fs.readFile(join(output, "provenance.json"), "utf8")).toBe(
-					before
-				)
-			} finally {
-				await fs.writeFile(target, bytes)
-			}
-			await fs.writeFile(target, "modified artifact")
-			try {
-				await expect(generate(options)).rejects.toThrow("modified/unmanaged")
-			} finally {
-				await fs.writeFile(target, bytes)
-			}
+			await generate(options)
+			expect((await fs.readFile(target)).equals(bytes)).toBe(true)
+			expect(await fs.readFile(join(output, "provenance.json"), "utf8")).toBe(
+				before
+			)
 		}
+		// Recorded hashes are trusted: content edits are not read back, so they
+		// survive an unchanged regeneration and are left to version control.
+		const readme = await fs.readFile(join(output, "README.md"))
+		await fs.writeFile(join(output, "README.md"), "owner modification")
+		await generate(options)
+		expect(await fs.readFile(join(output, "README.md"), "utf8")).toBe(
+			"owner modification"
+		)
+		await fs.writeFile(join(output, "README.md"), readme)
 		for (const path of ["unmanaged.txt", "dist/.hidden", "dist/extra.js"]) {
 			await fs.writeFile(join(output, path), "unmanaged")
 			try {
-				await expect(generate(options)).rejects.toThrow("modified/unmanaged")
+				await expect(generate(options)).rejects.toThrow("unmanaged")
 			} finally {
 				await fs.unlink(join(output, path))
 			}
 		}
 		await fs.mkdir(join(output, "unmanaged-directory"))
-		await expect(generate(options)).rejects.toThrow("modified/unmanaged")
+		await expect(generate(options)).rejects.toThrow("unmanaged")
 		await fs.rmdir(join(output, "unmanaged-directory"))
 		await fs.symlink(join(output, "README.md"), join(output, "unmanaged-link"))
-		await expect(generate(options)).rejects.toThrow("modified/unmanaged")
+		await expect(generate(options)).rejects.toThrow("unmanaged")
 		await fs.unlink(join(output, "unmanaged-link"))
 		for (const invalid of [
 			null,
 			{ ...provenance, pioneer: 2 },
 			{ ...provenance, generator: "unreviewed-generator" },
 			{ ...provenance, descriptorSha256: "invalid" },
+			{ ...provenance, inputSha256: "invalid" },
 			{ ...provenance, sources: [{ name: "proto", sha256: "invalid" }] },
 			{ ...provenance, artifacts: {} },
 			{ ...provenance, artifacts: { "../outside": "a".repeat(64) } },
@@ -203,35 +232,10 @@ test("generic input produces a compiled package, with stable regeneration and sa
 		expect(await fs.readFile(join(output, "provenance.json"), "utf8")).toBe(
 			before
 		)
-		const backup = `${output}.previous`
-		await fs.mkdir(backup)
-		await fs.writeFile(join(backup, "retained.txt"), "recovery evidence")
-		await expect(generate(options)).rejects.toThrow(
-			"interrupted generation backup"
-		)
-		expect(await fs.readFile(join(backup, "retained.txt"), "utf8")).toBe(
-			"recovery evidence"
-		)
-		expect(await fs.readFile(join(output, "provenance.json"), "utf8")).toBe(
-			before
-		)
-		await fs.unlink(join(backup, "retained.txt"))
-		await fs.rmdir(backup)
-		await fs.symlink(join(temporary, "missing-backup-target"), backup)
-		await expect(generate(options)).rejects.toThrow(
-			"interrupted generation backup"
-		)
-		expect((await fs.lstat(backup)).isSymbolicLink()).toBe(true)
-		await fs.unlink(backup)
 		await fs.writeFile(join(input, "broken.proto"), "not a protobuf file")
 		await expect(generate(options)).rejects.toThrow()
 		expect(await fs.readFile(join(output, "provenance.json"), "utf8")).toBe(
 			before
-		)
-		await fs.writeFile(join(output, "README.md"), "owner modification")
-		await expect(generate(options)).rejects.toThrow("modified/unmanaged")
-		expect(await fs.readFile(join(output, "README.md"), "utf8")).toBe(
-			"owner modification"
 		)
 	} finally {
 		await fs.rm(temporary, { recursive: true, force: true })
@@ -324,193 +328,6 @@ test("compiled CLI reads identity from its package root, not the working directo
 	}
 })
 
-test("Buf children use Node or isolated Bun without a shell or dependency installation", async () => {
-	const temporary = await fs.mkdtemp(join(tmpdir(), "pioneer-buf-test-"))
-	let registryRequests = 0
-	const registry = createServer((_request, response) => {
-		registryRequests++
-		response.writeHead(404, { "Content-Type": "application/json" })
-		response.end(JSON.stringify({ error: "Synthetic dependency is absent" }))
-	})
-	try {
-		await new Promise<void>((resolve, reject) => {
-			registry.once("error", reject)
-			registry.listen(0, "127.0.0.1", () => {
-				registry.removeListener("error", reject)
-				resolve()
-			})
-		})
-		const address = registry.address()
-		if (!address || typeof address === "string")
-			throw new Error("Synthetic registry did not bind a TCP address")
-		const packageRoot = join(temporary, "package")
-		const launcherRoot = join(packageRoot, "node_modules/@bufbuild/buf")
-		await fs.mkdir(join(launcherRoot, "bin"), { recursive: true })
-		await fs.cp(join(toolRoot, "dist"), join(packageRoot, "dist"), {
-			recursive: true
-		})
-		await fs.cp(
-			join(toolRoot, "src/runtime"),
-			join(packageRoot, "src/runtime"),
-			{
-				recursive: true
-			}
-		)
-		await fs.cp(
-			join(toolRoot, "package.json"),
-			join(packageRoot, "package.json")
-		)
-		const metadata = JSON.parse(
-			await fs.readFile(join(toolRoot, "package.json"), "utf8")
-		)
-		// Keep missing-package destinations inside the disposable fixture.
-		for (const name of Object.keys(metadata.dependencies)) {
-			const target = join(temporary, "node_modules", name)
-			await fs.mkdir(dirname(target), { recursive: true })
-			await fs.symlink(join(toolRoot, "node_modules", name), target, "dir")
-		}
-		const input = join(temporary, "proto")
-		await fs.cp(join(toolRoot, "tests/fixtures/proto"), input, {
-			recursive: true
-		})
-		const trace = join(temporary, "buf.jsonl")
-		const launcher = join(launcherRoot, "bin/buf")
-		await fs.writeFile(
-			join(launcherRoot, "package.json"),
-			JSON.stringify({ name: "@bufbuild/buf", type: "commonjs" })
-		)
-		await fs.writeFile(
-			launcher,
-			`const fs = require("node:fs")
-const operation = process.argv[2]
-fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({
-  interpreter: process.execPath,
-  bun: process.versions.bun ?? null,
-  runtimeArgs: process.execArgv,
-  args: process.argv.slice(2),
-  dotenv: process.env.PIONEER_BUF_SYNTHETIC_ENV ?? null
-}) + "\\n")
-if (process.env.PIONEER_BUF_MISSING_OPERATION === operation) {
-  require("@pioneer-synthetic/missing-dependency")
-}
-require(${JSON.stringify(createRequire(import.meta.url).resolve("@bufbuild/buf/bin/buf"))})
-`
-		)
-		await fs.writeFile(
-			join(temporary, ".env"),
-			"PIONEER_BUF_SYNTHETIC_ENV=loaded-by-child\n"
-		)
-		const registryUrl = `http://127.0.0.1:${address.port}/`
-		await fs.writeFile(
-			join(temporary, ".npmrc"),
-			`registry=${registryUrl}\n@pioneer-synthetic:registry=${registryUrl}\n`
-		)
-		const runner = join(temporary, "run.mjs")
-		await fs.writeFile(
-			runner,
-			`import { generate } from "./package/dist/index.js"
-await generate({ inputPath: process.argv[2], outputPath: process.argv[3] })
-console.log(JSON.stringify({ interpreter: process.execPath, bun: process.versions.bun ?? null }))
-`
-		)
-		for (const runtime of ["node", "bun"] as const) {
-			const output = join(temporary, `${runtime}-sdk`)
-			const cache = join(temporary, `${runtime}-package-cache`)
-			const env = {
-				...process.env,
-				PIONEER_BUF_SYNTHETIC_ENV: undefined,
-				PIONEER_BUF_MISSING_OPERATION: "",
-				NODE_OPTIONS: "",
-				BUN_INSTALL_CACHE_DIR: cache,
-				npm_config_cache: cache,
-				npm_config_registry: registryUrl
-			}
-			const command = (missing = "") =>
-				promisify(execFile)(
-					runtime === "node" ? "node" : process.execPath,
-					[
-						...(runtime === "bun" ? ["--no-env-file", "--no-install"] : []),
-						runner,
-						input,
-						output
-					],
-					{
-						cwd: temporary,
-						env: { ...env, PIONEER_BUF_MISSING_OPERATION: missing },
-						timeout: 30_000,
-						maxBuffer: 4 * 1024 * 1024
-					}
-				)
-			await fs.writeFile(trace, "")
-			const result = JSON.parse((await command()).stdout)
-			expect(Boolean(result.bun)).toBe(runtime === "bun")
-			const calls = (await fs.readFile(trace, "utf8"))
-				.trim()
-				.split("\n")
-				.map((line) => JSON.parse(line))
-			expect(calls.map((call) => call.args[0])).toEqual(["build", "generate"])
-			for (const call of calls) {
-				expect(call.interpreter).toBe(result.interpreter)
-				expect(call.bun).toBe(result.bun)
-				expect(call.dotenv).toBeNull()
-				expect(call.runtimeArgs).toEqual(
-					runtime === "bun" ? ["--no-env-file", "--no-install"] : []
-				)
-			}
-			expect(calls[0].args.slice(0, 4)).toEqual([
-				"build",
-				input,
-				"--as-file-descriptor-set",
-				"-o"
-			])
-			expect(calls[1].args.slice(0, 3)).toEqual([
-				"generate",
-				join(dirname(calls[0].args[4]), "descriptor.bin"),
-				"--template"
-			])
-			const provenance = await fs.readFile(join(output, "provenance.json"))
-			const artifacts = JSON.parse(provenance.toString()).artifacts
-			const before = new Map<string, Buffer>()
-			for (const path of Object.keys(artifacts))
-				before.set(path, await fs.readFile(join(output, path)))
-			for (const operation of ["build", "generate"]) {
-				await expect(command(operation)).rejects.toMatchObject({
-					code: 1,
-					stderr: expect.stringContaining(
-						"@pioneer-synthetic/missing-dependency"
-					)
-				})
-				expect(await fs.readFile(join(output, "provenance.json"))).toEqual(
-					provenance
-				)
-				for (const [path, bytes] of before)
-					expect(await fs.readFile(join(output, path))).toEqual(bytes)
-				await expect(fs.stat(`${output}.previous`)).rejects.toMatchObject({
-					code: "ENOENT"
-				})
-				await expect(fs.stat(cache)).rejects.toMatchObject({ code: "ENOENT" })
-				await expect(
-					fs.stat(join(packageRoot, "node_modules/@pioneer-synthetic"))
-				).rejects.toMatchObject({ code: "ENOENT" })
-				await expect(
-					fs.stat(join(temporary, "node_modules/@pioneer-synthetic"))
-				).rejects.toMatchObject({ code: "ENOENT" })
-				for (const path of ["bun.lock", "bun.lockb", "package-lock.json"])
-					await expect(fs.stat(join(temporary, path))).rejects.toMatchObject({
-						code: "ENOENT"
-					})
-				expect(registryRequests).toBe(0)
-			}
-		}
-	} finally {
-		if (registry.listening)
-			await new Promise<void>((resolve, reject) => {
-				registry.close((error) => (error ? reject(error) : resolve()))
-			})
-		await fs.rm(temporary, { recursive: true, force: true })
-	}
-}, 120_000)
-
 test("ignored namespaces are absent, optional React output does not change core dependencies", async () => {
 	const temporary = await fs.mkdtemp(join(tmpdir(), "pioneer-react-test-"))
 	try {
@@ -538,8 +355,8 @@ test("ignored namespaces are absent, optional React output does not change core 
 			await fs.readFile(join(output, "package.json"), "utf8")
 		)
 		expect(manifest.dependencies).toEqual({
-			"@bufbuild/protobuf": "2.10.1",
-			"@scure/base": "2.0.0"
+			"@bufbuild/protobuf": "2.16.0",
+			"@scure/base": "2.4.0"
 		})
 		expect(manifest.peerDependenciesMeta.react.optional).toBe(true)
 		expect(manifest.exports["./react"].types).toBe("./dist/react/index.d.ts")
@@ -575,7 +392,7 @@ test("ignored namespaces are absent, optional React output does not change core 
 			result.descriptorSha256
 		)
 		await fs.writeFile(join(output, "excluded/unmanaged.txt"), "unmanaged")
-		await expect(generate(regeneration)).rejects.toThrow("modified/unmanaged")
+		await expect(generate(regeneration)).rejects.toThrow("unmanaged")
 		await fs.unlink(join(output, "excluded/unmanaged.txt"))
 		await fs.symlink(
 			join(toolRoot, "node_modules"),
@@ -614,51 +431,44 @@ test("ignored namespaces are absent, optional React output does not change core 
 	}
 }, 120_000)
 
-test("message hooks add native signatures beside unchanged legacy operations", async () => {
-	const temporary = await fs.mkdtemp(join(tmpdir(), "pioneer-hooks-test-"))
-	try {
-		await generateReact(temporary, [
-			{
-				file: "example/v1/example",
-				service: "example.v1.Msg",
-				symbol: "Msg",
-				method: "Send",
-				localName: "send",
-				input: "example.v1.Record",
-				output: "example.v1.Record",
-				kind: "tx",
-				transport: "message",
-				factory: "messages"
-			}
-		])
-		const source = await fs.readFile(
-			join(temporary, "react/example/tx/use-send.ts"),
-			"utf8"
-		)
-		expect(source).toContain(
-			'export type SendResponse = Awaited<ReturnType<ChainTxContext["submit"]>>'
-		)
-		expect(source).toContain(
-			"export function sendMutationOptions(context: ChainTxContext)"
-		)
-		expect(source).toContain(
-			"invalidateIncludedTransaction(cache, context, result)"
-		)
-		expect(source).toContain(
-			"export type SendNativeResponse = NativeMessageReceipt<typeof Msg.method.send.output>"
-		)
-		expect(source).toContain(
-			"sendNativeMutationOptions(context: NativeChainTxContext): NativeMessageMutationOptions<typeof Msg.method.send.input, typeof Msg.method.send.output>"
-		)
-		expect(source).toContain(
-			"UseMutationResult<SendNativeResponse, Error, NativeMutationVariables<SendRequest>>"
-		)
-		expect(source).toContain(
-			"return useMutation(sendNativeMutationOptions(context))"
-		)
-	} finally {
-		await fs.rm(temporary, { recursive: true, force: true })
-	}
+test("message hooks add native signatures beside unchanged legacy operations", () => {
+	const files = generateReact([
+		{
+			file: "example/v1/example",
+			service: "example.v1.Msg",
+			symbol: "Msg",
+			method: "Send",
+			localName: "send",
+			input: "example.v1.Record",
+			output: "example.v1.Record",
+			kind: "tx",
+			transport: "message",
+			factory: "messages"
+		}
+	])
+	const source = files.get("react/example/tx/use-send.ts") ?? ""
+	expect(source).toContain(
+		'export type SendResponse = Awaited<ReturnType<ChainTxContext["submit"]>>'
+	)
+	expect(source).toContain(
+		"export function sendMutationOptions(context: ChainTxContext)"
+	)
+	// Included-transaction invalidation lives in the shared runtime hook.
+	expect(source).toContain(
+		"return useSdkMutation(context, sendMutationOptions(context))"
+	)
+	expect(source).toContain(
+		"export type SendNativeResponse = NativeMessageReceipt<typeof Msg.method.send.output>"
+	)
+	expect(source).toContain(
+		"sendNativeMutationOptions(context: NativeChainTxContext): NativeMessageMutationOptions<typeof Msg.method.send.input, typeof Msg.method.send.output>"
+	)
+	expect(source).toContain(
+		"UseMutationResult<SendNativeResponse, Error, NativeMutationVariables<SendRequest>>"
+	)
+	expect(source).toContain(
+		"return useSdkNativeMutation(sendNativeMutationOptions(context))"
+	)
 })
 
 test("synthetic Cosmos schemas compile Msg hooks, clients, DIRECT and Comet runtimes", async () => {

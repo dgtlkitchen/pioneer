@@ -1,10 +1,9 @@
-import { promises as fs } from "node:fs"
-import { dirname, join, relative } from "node:path"
-import { type FileRegistry, getExtension } from "@bufbuild/protobuf"
-import * as wkt from "@bufbuild/protobuf/wkt"
+import { posix } from "node:path"
+import type { FileRegistry } from "@bufbuild/protobuf"
+import { protobuf, wkt } from "./protobuf.js"
 
 const specifier = (from: string, to: string) => {
-	const path = relative(dirname(from), to).replaceAll("\\", "/")
+	const path = posix.relative(posix.dirname(from), to)
 	return path.startsWith(".") ? path : `./${path}`
 }
 
@@ -33,11 +32,12 @@ function httpRule(value: unknown): value is HttpRule {
 	)
 }
 
-export async function generateClients(
-	output: string,
+/** Adds clients, registry, root index and operations.json beside the in-memory schemas. */
+export function generateClients(
+	files: Map<string, string>,
 	registry: FileRegistry,
 	cosmos: boolean
-) {
+): Operation[] {
 	const http = registry.getExtension("google.api.http")
 	const registryImports: string[] = []
 	const registryNames: string[] = []
@@ -62,19 +62,16 @@ export async function generateClients(
 			registryNames.push(alias)
 			continue
 		}
-		const generated = await fs.readFile(
-			join(output, `${file.name}_pb.ts`),
-			"utf8"
-		)
-		const fileName = generated.match(/export const (file_\w+):/)?.[1]
-		if (!fileName)
+		const generated = files.get(`${file.name}_pb.ts`)
+		const fileName = generated?.match(/export const (file_\w+):/)?.[1]
+		if (!generated || !fileName)
 			throw new Error(`Missing generated file export: ${file.name}`)
 		const alias = `f${registryNames.length}`
 		registryImports.push(
 			`import { ${fileName} as ${alias} } from "./${file.name}_pb.js"`
 		)
 		registryNames.push(alias)
-		const clientPath = join(output, `${file.name}_client.ts`)
+		const clientPath = `${file.name}_client.ts`
 		const serviceExports = [
 			...generated.matchAll(/export const ([\w$]+): GenService/g)
 		].map((match) => match[1])
@@ -96,6 +93,8 @@ export async function generateClients(
 				input: method.input.typeName,
 				output: method.output.typeName
 			})
+			const call = (method: (typeof service.methods)[number]) =>
+				`${method.localName}: UnaryCall<typeof ${symbol}.method.${method.localName}.input, typeof ${symbol}.method.${method.localName}.output>`
 			if (cosmos && service.name === "Msg") {
 				usesMessages = true
 				services.add(symbol)
@@ -120,10 +119,11 @@ export async function generateClients(
 				continue
 			}
 			const methods: string[] = []
+			const signatures: string[] = []
 			for (const method of service.methods) {
 				if (method.methodKind !== "unary" || !method.proto.options || !http)
 					continue
-				const rule = getExtension(method.proto.options, http)
+				const rule = protobuf.getExtension(method.proto.options, http)
 				if (
 					!httpRule(rule) ||
 					typeof rule.pattern.value !== "string" ||
@@ -137,6 +137,7 @@ export async function generateClients(
 					path: rule.pattern.value,
 					body: typeof rule.body === "string" ? rule.body : ""
 				}
+				signatures.push(call(method))
 				methods.push(
 					`${method.localName}: bindRest({ ...config, registry: config.registry ?? registry }, ${symbol}.method.${method.localName}, ${JSON.stringify(binding)}),`
 				)
@@ -154,7 +155,9 @@ export async function generateClients(
 				usesRest = true
 				services.add(symbol)
 				lines.push(
-					`export function create${service.name}Client(config: RestClientConfig) {`,
+					`export function create${service.name}Client(config: RestClientConfig): {`,
+					...signatures,
+					"} {",
 					"return {",
 					...methods,
 					"}",
@@ -166,38 +169,31 @@ export async function generateClients(
 			if (cosmos && service.name === "Query") {
 				usesRpc = true
 				services.add(symbol)
+				const unary = service.methods.filter(
+					(method) => method.methodKind === "unary"
+				)
 				lines.push(
-					`export function create${service.name}RpcClient(config: RestClientConfig) {`,
+					`export function create${service.name}RpcClient(config: RestClientConfig): {`,
+					...unary.map(call),
+					"} {",
 					"return {"
 				)
-				for (const method of service.methods) {
-					if (method.methodKind === "unary") {
-						lines.push(
-							`${method.localName}: bindRpc(config, ${symbol}.method.${method.localName}),`
-						)
-						if (
-							!operations.some(
-								(operation) =>
-									operation.service === service.typeName &&
-									operation.method === method.name
-							)
-						) {
-							operations.push({
-								...describe(method),
-								kind: "query",
-								transport: "rpc",
-								factory: `create${service.name}RpcClient`
-							})
-						} else {
-							const operation = operations.find(
-								(entry) =>
-									entry.service === service.typeName &&
-									entry.method === method.name
-							)
-							if (operation)
-								operation.rpcFactory = `create${service.name}RpcClient`
-						}
-					}
+				for (const method of unary) {
+					lines.push(
+						`${method.localName}: bindRpc(config, ${symbol}.method.${method.localName}),`
+					)
+					const operation = operations.find(
+						(entry) =>
+							entry.service === service.typeName && entry.method === method.name
+					)
+					if (operation) operation.rpcFactory = `create${service.name}RpcClient`
+					else
+						operations.push({
+							...describe(method),
+							kind: "query",
+							transport: "rpc",
+							factory: `create${service.name}RpcClient`
+						})
 				}
 				lines.push("}", "}")
 			}
@@ -206,41 +202,38 @@ export async function generateClients(
 		const imports = ["// Generated by Pioneer. DO NOT EDIT."]
 		if (usesRest || usesRpc)
 			imports.push(
-				`import { ${usesRest ? "bindRest, " : ""}type RestClientConfig } from "${specifier(clientPath, join(output, "runtime/rest.js"))}"`
+				`import { ${usesRest ? "bindRest, " : ""}type RestClientConfig, type UnaryCall } from "${specifier(clientPath, "runtime/rest.js")}"`
 			)
 		if (usesRest)
 			imports.push(
-				`import { registry } from "${specifier(clientPath, join(output, "registry.js"))}"`
+				`import { registry } from "${specifier(clientPath, "registry.js")}"`
 			)
 		if (usesRpc)
 			imports.push(
-				`import { bindRpc } from "${specifier(clientPath, join(output, "runtime/rpc.js"))}"`
+				`import { bindRpc } from "${specifier(clientPath, "runtime/rpc.js")}"`
 			)
 		if (usesMessages)
 			imports.push(
 				'import type { MessageInitShape } from "@bufbuild/protobuf"',
 				'import type { Any } from "@bufbuild/protobuf/wkt"',
-				`import { message } from "${specifier(clientPath, join(output, "runtime/message.js"))}"`
+				`import { message } from "${specifier(clientPath, "runtime/message.js")}"`
 			)
 		imports.push(
 			`import { ${[...services].join(", ")} } from "./${file.name.split("/").at(-1)}_pb.js"`
 		)
-		await fs.writeFile(clientPath, `${[...imports, ...lines].join("\n")}\n`)
+		files.set(clientPath, `${[...imports, ...lines].join("\n")}\n`)
 	}
-	await fs.writeFile(
-		join(output, "registry.ts"),
-		`// Generated by Pioneer. DO NOT EDIT.\nimport { createRegistry } from "@bufbuild/protobuf"\n${registryImports.join("\n")}\nexport const registry = createRegistry(${registryNames.join(", ")})\n`
+	files.set(
+		"registry.ts",
+		`// Generated by Pioneer. DO NOT EDIT.\nimport { createRegistry, type Registry } from "@bufbuild/protobuf"\n${registryImports.join("\n")}\nexport const registry: Registry = createRegistry(${registryNames.join(", ")})\n`
 	)
-	await fs.writeFile(
-		join(output, "index.ts"),
+	files.set(
+		"index.ts",
 		`export * from "./runtime/rest.js"\nexport * from "./runtime/rpc.js"\nexport * from "./runtime/message.js"\n${cosmos ? 'export * from "./runtime/transaction.js"\nexport * from "./runtime/comet.js"\n' : ""}export { create, fromBinary, toBinary, fromJson, toJson } from "@bufbuild/protobuf"\nexport type { DescMessage, DescMethodUnary, MessageInitShape, MessageShape, JsonValue } from "@bufbuild/protobuf"\nexport type { Any } from "@bufbuild/protobuf/wkt"\nexport { registry } from "./registry.js"\n`
 	)
 	operations.sort((a, b) =>
 		`${a.service}/${a.method}`.localeCompare(`${b.service}/${b.method}`, "en")
 	)
-	await fs.writeFile(
-		join(output, "operations.json"),
-		`${JSON.stringify(operations, null, 2)}\n`
-	)
+	files.set("operations.json", `${JSON.stringify(operations, null, 2)}\n`)
 	return operations
 }

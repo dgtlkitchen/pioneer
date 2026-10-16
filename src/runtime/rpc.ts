@@ -11,8 +11,15 @@ import { base64 } from "@scure/base"
 import {
 	type CallOptions,
 	type RestClientConfig,
-	readResponse
+	readResponse,
+	type UnaryCall
 } from "./rest.js"
+
+export type RpcRequest = (
+	method: string,
+	params: Record<string, unknown>,
+	options?: CallOptions
+) => Promise<unknown>
 
 export function rpcRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -53,7 +60,7 @@ export class AbciQueryError extends Error {
 	}
 }
 
-export function createRpcRequest(config: RestClientConfig) {
+export function createRpcRequest(config: RestClientConfig): RpcRequest {
 	const url = new URL(config.baseUrl)
 	if (
 		!["https:", "http:"].includes(url.protocol) ||
@@ -107,7 +114,7 @@ export function createRpcRequest(config: RestClientConfig) {
 export function bindRpc<I extends DescMessage, O extends DescMessage>(
 	config: RestClientConfig,
 	method: DescMethodUnary<I, O>
-) {
+): UnaryCall<I, O> {
 	const request = createRpcRequest(config)
 	return async (
 		input: MessageInitShape<I>,

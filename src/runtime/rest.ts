@@ -24,6 +24,10 @@ export type RestClientConfig = {
 }
 export type CallOptions = { signal?: AbortSignal }
 export type HttpBinding = { method: string; path: string; body: string }
+export type UnaryCall<I extends DescMessage, O extends DescMessage> = (
+	request: MessageInitShape<I>,
+	options?: CallOptions
+) => Promise<MessageShape<O>>
 
 export class HttpError extends Error {
 	constructor(readonly status: number) {
@@ -81,7 +85,7 @@ export function appendSearchParams(
 	value: JsonValue,
 	excluded: ReadonlySet<string>,
 	prefix = ""
-) {
+): void {
 	if (excluded.has(prefix) || value === null) return
 	if (Array.isArray(value)) {
 		for (const item of value) appendSearchParams(url, item, excluded, prefix)
@@ -97,7 +101,7 @@ export function bindRest<I extends DescMessage, O extends DescMessage>(
 	config: RestClientConfig,
 	method: DescMethodUnary<I, O>,
 	binding: HttpBinding
-) {
+): UnaryCall<I, O> {
 	const base = new URL(config.baseUrl)
 	if (
 		!["https:", "http:"].includes(base.protocol) ||

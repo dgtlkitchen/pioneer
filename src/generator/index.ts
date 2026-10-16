@@ -1,32 +1,26 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { promises as fs } from "node:fs"
+import { promises as fs, readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, join, posix, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import {
-	create,
-	createFileRegistry,
-	fromBinary,
-	toBinary
-} from "@bufbuild/protobuf"
-import {
-	type FileDescriptorProto,
-	FileDescriptorSetSchema
-} from "@bufbuild/protobuf/wkt"
-import ts from "typescript"
+import type { FileDescriptorProto } from "@bufbuild/protobuf/wkt"
 import { toolRoot } from "../paths.js"
+import { checkPackage, emitPackage } from "./emit.js"
+import { protobuf, wkt } from "./protobuf.js"
+import { generateSchemas, generatorVersion } from "./protoc.js"
 import { generateReact } from "./react.js"
 import { generateClients } from "./rest.js"
 
 const exec = promisify(execFile)
 const require = createRequire(import.meta.url)
 const runtimeDependencies = {
-	"@bufbuild/protobuf": "2.10.1",
-	"@scure/base": "2.0.0"
+	"@bufbuild/protobuf": "2.16.0",
+	"@scure/base": "2.4.0"
 }
-const digest = (bytes: Uint8Array) =>
+const digest = (bytes: Uint8Array | string) =>
 	createHash("sha256").update(bytes).digest("hex")
 const record = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value)
@@ -44,53 +38,100 @@ export type GenerateOptions = {
 	react?: boolean
 }
 
-function compilePackage(stage: string, react = false) {
-	const options: ts.CompilerOptions = {
-		target: ts.ScriptTarget.ES2022,
-		module: ts.ModuleKind.ESNext,
-		moduleResolution: ts.ModuleResolutionKind.Bundler,
-		strict: true,
-		declaration: true,
-		noEmitOnError: true,
-		skipLibCheck: false,
-		rootDir: stage,
-		outDir: join(stage, "dist"),
-		types: [],
-		lib: ["lib.esnext.d.ts", "lib.dom.d.ts"]
+function packageVersion(name: string) {
+	for (const request of [`${name}/package.json`, name]) {
+		let directory: string
+		try {
+			directory = dirname(require.resolve(request))
+		} catch {
+			continue
+		}
+		for (;;) {
+			try {
+				const metadata: unknown = JSON.parse(
+					readFileSync(join(directory, "package.json"), "utf8")
+				)
+				if (
+					record(metadata) &&
+					metadata.name === name &&
+					typeof metadata.version === "string"
+				)
+					return metadata.version
+			} catch {}
+			const parent = dirname(directory)
+			if (parent === directory) break
+			directory = parent
+		}
 	}
-	const host = ts.createCompilerHost(options)
-	// Check against the tool's pinned runtimes; generation does not install packages.
-	host.resolveModuleNames = (names, containingFile) =>
-		names.map((name) => {
-			const runtime = [
-				...Object.keys(runtimeDependencies),
-				...(react ? ["react", "@tanstack/react-query"] : [])
-			].some(
-				(dependency) => name === dependency || name.startsWith(`${dependency}/`)
-			)
-			return ts.resolveModuleName(
-				name,
-				runtime ? join(toolRoot, "package.json") : containingFile,
-				options,
-				host
-			).resolvedModule
-		})
-	const program = ts.createProgram(
-		ts.sys.readDirectory(stage, [".ts"], ["dist", "node_modules"]),
-		options,
-		host
-	)
-	const diagnostics = ts.getPreEmitDiagnostics(program)
-	if (diagnostics.length)
-		throw new Error(
-			ts.formatDiagnosticsWithColorAndContext(diagnostics, {
-				getCanonicalFileName: (file) => file,
-				getCurrentDirectory: () => stage,
-				getNewLine: () => "\n"
-			})
+	throw new Error(`Cannot resolve installed ${name} version`)
+}
+
+let toolchain: Record<string, string> | undefined
+let tool: Promise<string> | undefined
+/** Versions that shape emitted bytes or the strict check. */
+function toolchainVersions(): Record<string, string> {
+	const versions =
+		toolchain ??
+		Object.fromEntries([
+			["generator", generatorVersion],
+			...[
+				"typescript",
+				"rolldown",
+				"@bufbuild/protobuf",
+				"@scure/base",
+				"@tanstack/react-query",
+				"react",
+				"@types/react"
+			].map((name) => [name, packageVersion(name)])
+		])
+	toolchain = versions
+	return versions
+}
+/** Generator code, runtime templates and toolchain: a change invalidates unchanged-input reuse. */
+function toolDigest() {
+	tool ??= (async () => {
+		const hash = createHash("sha256")
+		hash.update(JSON.stringify(toolchainVersions()))
+		for (const [label, directory] of [
+			["generator", dirname(fileURLToPath(import.meta.url))],
+			["runtime", join(toolRoot, "src/runtime")]
+		]) {
+			for (const name of (await fs.readdir(directory))
+				.filter((entry) => /\.(?:[cm]?js|ts)$/.test(entry))
+				.sort()) {
+				hash.update(`\0${label}/${name}\0`)
+				hash.update(await fs.readFile(join(directory, name)))
+			}
+		}
+		return hash.digest("hex")
+	})()
+	return tool
+}
+
+async function writeTree(root: string, files: ReadonlyMap<string, string>) {
+	const directories = new Set<string>()
+	for (const path of files.keys()) {
+		let parent = posix.dirname(path)
+		while (parent !== "." && !directories.has(parent)) {
+			directories.add(parent)
+			parent = posix.dirname(parent)
+		}
+	}
+	await Promise.all(
+		[...directories].map((directory) =>
+			fs.mkdir(join(root, directory), { recursive: true })
 		)
-	if (program.emit().emitSkipped)
-		throw new Error("Generated package emission failed")
+	)
+	const entries = [...files]
+	let next = 0
+	await Promise.all(
+		Array.from({ length: 64 }, async () => {
+			while (next < entries.length) {
+				const [path, text] = entries[next++]
+				await fs.writeFile(join(root, path), text)
+			}
+		})
+	)
 }
 
 export async function generate(options: GenerateOptions) {
@@ -98,6 +139,7 @@ export async function generate(options: GenerateOptions) {
 	const output = resolve(options.outputPath)
 	const name = options.packageName ?? "generated-protobuf-sdk"
 	const version = options.packageVersion ?? "0.1.0"
+	const react = options.react ?? false
 	const finderMetadata: string[] = []
 	const ignorePaths = (options.ignorePaths ?? []).map((path) =>
 		path.replace(/\/$/, "")
@@ -114,6 +156,8 @@ export async function generate(options: GenerateOptions) {
 		throw new Error("Invalid package version")
 	if (output === input || input.startsWith(`${output}/`))
 		throw new Error("Output must not contain the input source")
+	let previousInput: string | undefined
+	let previousArtifacts: ReadonlyMap<string, string> | undefined
 	try {
 		const previous: unknown = JSON.parse(
 			await fs.readFile(join(output, "provenance.json"), "utf8")
@@ -121,7 +165,9 @@ export async function generate(options: GenerateOptions) {
 		if (
 			!record(previous) ||
 			previous.pioneer !== 1 ||
-			previous.generator !== "protoc-gen-es@2.10.1" ||
+			typeof previous.generator !== "string" ||
+			!/^protoc-gen-es@\d+\.\d+\.\d+$/.test(previous.generator) ||
+			(previous.inputSha256 !== undefined && !sha256(previous.inputSha256)) ||
 			!sha256(previous.descriptorSha256) ||
 			typeof previous.react !== "boolean" ||
 			!Array.isArray(previous.sources) ||
@@ -174,33 +220,30 @@ export async function generate(options: GenerateOptions) {
 					const metadataCount = finderMetadata.length
 					await inspect(path)
 					if (!directories.has(path) && finderMetadata.length === metadataCount)
-						throw new Error(
-							`Output contains modified/unmanaged member: ${path}`
-						)
+						throw new Error(`Output contains unmanaged member: ${path}`)
 					continue
 				}
 				if (!entry.isFile())
-					throw new Error(`Output contains modified/unmanaged member: ${path}`)
+					throw new Error(`Output contains unmanaged member: ${path}`)
 				// Finder metadata is retained but never published as SDK content.
 				if (entry.name === ".DS_Store") {
 					finderMetadata.push(path)
 					continue
 				}
 				if (path === "provenance.json") continue
-				if (
-					artifacts.get(path) !== digest(await fs.readFile(join(output, path)))
-				)
-					throw new Error(`Output contains modified/unmanaged file: ${path}`)
+				// Recorded hashes are trusted; content edits are left to version control.
+				if (!artifacts.has(path))
+					throw new Error(`Output contains unmanaged file: ${path}`)
 				seen.add(path)
 			}
 		}
 		await inspect("")
-		for (const path of artifacts.keys())
-			if (!seen.has(path))
-				throw new Error(`Output is missing recorded artifact: ${path}`)
-		const metadata: unknown = JSON.parse(
-			await fs.readFile(join(output, "package.json"), "utf8")
-		)
+		// Deleted artifacts are simply written again.
+		const deleted = [...artifacts.keys()].filter((path) => !seen.has(path))
+		for (const path of deleted) artifacts.delete(path)
+		const metadata: unknown = deleted.includes("package.json")
+			? { name, version }
+			: JSON.parse(await fs.readFile(join(output, "package.json"), "utf8"))
 		if (
 			!record(metadata) ||
 			metadata.name !== name ||
@@ -210,6 +253,9 @@ export async function generate(options: GenerateOptions) {
 			throw new Error(
 				"Output package identity does not match the requested package"
 			)
+		if (typeof previous.inputSha256 === "string" && !deleted.length)
+			previousInput = previous.inputSha256
+		previousArtifacts = artifacts
 	} catch (error) {
 		if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
 			throw error
@@ -230,36 +276,48 @@ export async function generate(options: GenerateOptions) {
 		}
 	}
 	const temporary = await fs.mkdtemp(join(tmpdir(), "pioneer-"))
-	const backup = `${output}.previous`
 	try {
-		const sources = []
-		const files = new Map<string, FileDescriptorProto>()
 		const buf = [
 			...(process.versions.bun ? ["--no-env-file", "--no-install"] : []),
 			require.resolve("@bufbuild/buf/bin/buf")
 		]
-		for (const [index, path] of [
+		const roots = [
 			input,
 			...(options.dependencyPaths ?? []).map((path) => resolve(path))
-		].entries()) {
-			const descriptorPath = join(temporary, `${index}.bin`)
-			await exec(
-				process.execPath,
-				[
-					...buf,
-					"build",
-					path,
-					"--as-file-descriptor-set",
-					"-o",
-					descriptorPath
-				],
-				{ timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }
-			)
-			const bytes = await fs.readFile(descriptorPath)
-			if (bytes.length > 32 * 1024 * 1024)
-				throw new Error("Descriptor set exceeds 32 MiB")
-			sources.push({ name: basename(path), sha256: digest(bytes) })
-			for (const file of fromBinary(FileDescriptorSetSchema, bytes).file)
+		]
+		const builds = await Promise.allSettled(
+			roots.map(async (path, index) => {
+				const descriptorPath = join(temporary, `${index}.bin`)
+				await exec(
+					process.execPath,
+					[
+						...buf,
+						"build",
+						path,
+						"--as-file-descriptor-set",
+						"-o",
+						descriptorPath
+					],
+					{ timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }
+				)
+				const bytes = await fs.readFile(descriptorPath)
+				if (bytes.length > 32 * 1024 * 1024)
+					throw new Error("Descriptor set exceeds 32 MiB")
+				return bytes
+			})
+		)
+		const sources = []
+		const files = new Map<string, FileDescriptorProto>()
+		for (const [index, build] of builds.entries()) {
+			if (build.status === "rejected") throw build.reason
+			sources.push({
+				name: basename(roots[index]),
+				sha256: digest(build.value)
+			})
+			for (const file of protobuf.fromBinary(
+				wkt.FileDescriptorSetSchema,
+				build.value
+			).file)
 				files.set(file.name, file)
 		}
 		for (const path of files.keys()) {
@@ -286,65 +344,62 @@ export async function generate(options: GenerateOptions) {
 			ordered.push(file)
 		}
 		for (const name of [...files.keys()].sort()) visit(name)
-		const descriptors = create(FileDescriptorSetSchema, { file: ordered })
-		const registry = createFileRegistry(descriptors)
-		const descriptorBytes = toBinary(FileDescriptorSetSchema, descriptors)
-		const descriptorPath = join(temporary, "descriptor.bin")
-		await fs.writeFile(descriptorPath, descriptorBytes)
-		const stage = join(temporary, "gen")
-		const template = {
-			version: "v2",
-			plugins: [
-				{
-					local: [
-						process.execPath,
-						require.resolve("@bufbuild/protoc-gen-es/bin/protoc-gen-es")
-					],
-					out: stage,
-					include_imports: true,
-					opt: ["target=ts", "import_extension=js"]
-				}
-			]
-		}
-		await exec(
-			process.execPath,
-			[
-				...buf,
-				"generate",
-				descriptorPath,
-				"--template",
-				JSON.stringify(template)
-			],
-			{ timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }
+		const descriptors = protobuf.create(wkt.FileDescriptorSetSchema, {
+			file: ordered
+		})
+		const descriptorSha256 = digest(
+			protobuf.toBinary(wkt.FileDescriptorSetSchema, descriptors)
 		)
-		await fs.mkdir(join(stage, "runtime"), { recursive: true })
+		const result = {
+			outputPath: output,
+			packageName: name,
+			files: files.size,
+			descriptorSha256
+		}
+		const inputSha256 = digest(
+			JSON.stringify({
+				tool: await toolDigest(),
+				sources,
+				descriptorSha256,
+				name,
+				version,
+				react,
+				ignorePaths
+			})
+		)
+		// Verified, unchanged output for identical inputs and toolchain: nothing to do.
+		if (previousInput === inputSha256) return result
+		const registry = protobuf.createFileRegistry(descriptors)
 		const cosmos =
 			registry.getMessage("cosmos.tx.v1beta1.SignDoc") !== undefined
-		for (const file of [
-			"rest.ts",
-			"rpc.ts",
-			"message.ts",
-			...(cosmos ? ["transaction.ts", "comet.ts"] : [])
-		])
-			await fs.copyFile(
-				join(toolRoot, "src/runtime", file),
-				join(stage, "runtime", file)
+		const packageFiles = generateSchemas(ordered, registry)
+		await Promise.all(
+			[
+				...[
+					"rest.ts",
+					"rpc.ts",
+					"message.ts",
+					...(cosmos ? ["transaction.ts", "comet.ts"] : [])
+				].map((file) => [`runtime/${file}`, file]),
+				...(react
+					? [
+							["react/context.ts", "react-context.ts"],
+							["react/options.ts", "react-options.ts"]
+						]
+					: [])
+			].map(async ([target, source]) =>
+				packageFiles.set(
+					target,
+					await fs.readFile(join(toolRoot, "src/runtime", source), "utf8")
+				)
 			)
-		const operations = await generateClients(stage, registry, cosmos)
-		if (options.react) {
-			await fs.mkdir(join(stage, "react"), { recursive: true })
-			await fs.copyFile(
-				join(toolRoot, "src/runtime/react-context.ts"),
-				join(stage, "react/context.ts")
-			)
-			await fs.copyFile(
-				join(toolRoot, "src/runtime/react-options.ts"),
-				join(stage, "react/options.ts")
-			)
-			await generateReact(stage, operations)
-		}
-		await fs.writeFile(
-			join(stage, "package.json"),
+		)
+		const operations = generateClients(packageFiles, registry, cosmos)
+		if (react)
+			for (const [path, text] of generateReact(operations))
+				packageFiles.set(path, text)
+		packageFiles.set(
+			"package.json",
 			`${JSON.stringify(
 				{
 					name,
@@ -357,13 +412,13 @@ export async function generate(options: GenerateOptions) {
 						"operations.json",
 						"provenance.json",
 						"README.md",
-						...(options.react ? ["react/hooks.json"] : [])
+						...(react ? ["react/hooks.json"] : [])
 					],
 					exports: {
 						".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
 						"./package.json": "./package.json",
 						"./operations.json": "./operations.json",
-						...(options.react
+						...(react
 							? {
 									"./react": {
 										types: "./dist/react/index.d.ts",
@@ -375,7 +430,7 @@ export async function generate(options: GenerateOptions) {
 						"./*": { types: "./dist/*.d.ts", import: "./dist/*.js" }
 					},
 					dependencies: runtimeDependencies,
-					...(options.react
+					...(react
 						? {
 								peerDependencies: {
 									react: "^19.3.0",
@@ -392,8 +447,8 @@ export async function generate(options: GenerateOptions) {
 				2
 			)}\n`
 		)
-		await fs.writeFile(
-			join(stage, "README.md"),
+		packageFiles.set(
+			"README.md",
 			`# ${name}
 
 Generated by Pioneer from Buf descriptors. ESM JavaScript and declarations are in dist.
@@ -411,7 +466,7 @@ release metadata, review npm pack --dry-run, and explicitly authorize publishing
 UNLICENSED is deliberate, not an MIT license claim.
 ${cosmos ? "\nCosmos DIRECT helpers do not discover account identity, choose fees, or authorize signing. Chain-specific signature envelopes belong to the consuming application.\n" : ""}
 ${
-	options.react
+	react
 		? `## React hooks: required TanStack Query setup
 
 The shipped React hooks require React and @tanstack/react-query (see this
@@ -456,59 +511,65 @@ a QueryClientProvider does not supply a wallet or authorize transactions.
 		: ""
 }`
 		)
-		compilePackage(stage, options.react)
-		const artifacts: Record<string, string> = {}
-		for (const path of ts.sys.readDirectory(stage).sort())
-			artifacts[path.slice(stage.length + 1)] = digest(await fs.readFile(path))
-		await fs.writeFile(
-			join(stage, "provenance.json"),
-			`${JSON.stringify({ pioneer: 1, sources, descriptorSha256: digest(descriptorBytes), files: [...files.keys()].sort(), ignorePaths, react: options.react ?? false, generator: "protoc-gen-es@2.10.1", artifacts }, null, 2)}\n`
+		const emitted = await emitPackage(packageFiles)
+		await checkPackage({
+			root: output,
+			sources: packageFiles,
+			emitted,
+			resolveFrom: join(toolRoot, "package.json"),
+			runtimes: [
+				...Object.keys(runtimeDependencies),
+				...(react ? ["react", "@tanstack/react-query"] : [])
+			],
+			toolchain: toolchainVersions()
+		})
+		const artifacts = new Map(
+			[...packageFiles, ...emitted].sort(([a], [b]) =>
+				a < b ? -1 : a > b ? 1 : 0
+			)
 		)
-		// Stage the whole result; failed generation must not destroy the last SDK.
-		// Refuse an interrupted prior replacement rather than deleting its backup.
-		try {
-			await fs.lstat(backup)
-			throw new Error(`Resolve interrupted generation backup: ${backup}`)
-		} catch (error) {
-			if (
-				!(error instanceof Error && "code" in error && error.code === "ENOENT")
+		const hashes = new Map(
+			[...artifacts].map(([path, text]) => [path, digest(text)])
+		)
+		// Everything above ran in memory, so a failure has not touched the output.
+		// Update it in place: remove stale files, write changed ones, then record
+		// provenance. An interrupted update fails the next verification; restore
+		// the output from version control.
+		await fs.mkdir(output, { recursive: true })
+		const stale = [...(previousArtifacts?.keys() ?? [])].filter(
+			(path) => !artifacts.has(path)
+		)
+		await Promise.all(stale.map((path) => fs.unlink(join(output, path))))
+		const emptied = new Set<string>()
+		for (const path of stale)
+			for (
+				let parent = posix.dirname(path);
+				parent !== ".";
+				parent = posix.dirname(parent)
 			)
-				throw error
-		}
-		await fs.mkdir(dirname(output), { recursive: true })
-		let hadOutput = false
-		try {
-			await fs.rename(output, backup)
-			hadOutput = true
-		} catch (error) {
-			if (
-				!(error instanceof Error && "code" in error && error.code === "ENOENT")
-			)
-				throw error
-		}
-		try {
-			// Temp and repository may be on different filesystems.
-			await fs.cp(stage, output, {
-				recursive: true,
-				errorOnExist: true,
-				force: false
-			})
-			for (const relative of finderMetadata) {
-				await fs.mkdir(dirname(join(output, relative)), { recursive: true })
-				await fs.copyFile(join(backup, relative), join(output, relative))
+				emptied.add(parent)
+		// Deepest first; directories still holding files (or Finder metadata) stay.
+		for (const directory of [...emptied].sort((a, b) => b.length - a.length)) {
+			try {
+				await fs.rmdir(join(output, directory))
+			} catch (error) {
+				if (!(error instanceof Error && "code" in error)) throw error
+				if (error.code !== "ENOTEMPTY" && error.code !== "EEXIST") throw error
 			}
-		} catch (error) {
-			await fs.rm(output, { recursive: true, force: true })
-			if (hadOutput) await fs.rename(backup, output)
-			throw error
 		}
-		if (hadOutput) await fs.rm(backup, { recursive: true })
-		return {
-			outputPath: output,
-			packageName: name,
-			files: files.size,
-			descriptorSha256: digest(descriptorBytes)
-		}
+		await writeTree(
+			output,
+			new Map(
+				[...artifacts].filter(
+					([path]) => previousArtifacts?.get(path) !== hashes.get(path)
+				)
+			)
+		)
+		await fs.writeFile(
+			join(output, "provenance.json"),
+			`${JSON.stringify({ pioneer: 1, sources, descriptorSha256, files: [...files.keys()].sort(), ignorePaths, react, generator: generatorVersion, inputSha256, artifacts: Object.fromEntries(hashes) }, null, 2)}\n`
+		)
+		return result
 	} finally {
 		await fs.rm(temporary, { recursive: true, force: true })
 	}

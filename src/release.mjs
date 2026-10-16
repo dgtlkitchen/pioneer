@@ -520,7 +520,7 @@ async function closure(bunPath, shrinkwrapPath, manifest) {
 	const info = await regular(bunPath)
 	requireValue(info.size <= limit, "Bun lock", "exceeds eight MiB")
 	const { default: ts } = await import("typescript")
-	equal(ts.version, "5.9.3", "lock parser")
+	equal(ts.version, "6.0.3", "lock parser")
 	const parsed = ts.parseConfigFileTextToJson(
 		bunPath,
 		await readFile(bunPath, "utf8")
@@ -671,7 +671,7 @@ async function closure(bunPath, shrinkwrapPath, manifest) {
 			records.some(
 				(entry) =>
 					entry.name === `@bufbuild/buf-${platform}` &&
-					entry.version === "1.60.0"
+					entry.version === "1.74.0"
 			),
 			"Buf platform closure",
 			"missing selected native executable package"

@@ -2,9 +2,19 @@ import { clone, isMessage } from "@bufbuild/protobuf"
 import { AnySchema } from "@bufbuild/protobuf/wkt"
 import {
 	mutationOptions,
+	type OmitKeyof,
 	type QueryClient,
+	type QueryFunction,
+	type QueryKeyWithDataTag,
 	queryOptions,
-	type UseMutationOptions
+	type UseMutationOptions,
+	type UseMutationResult,
+	type UseQueryOptions,
+	type UseSuspenseQueryResult,
+	useMutation,
+	useQueryClient,
+	useSuspenseQuery,
+	type WithRequired
 } from "@tanstack/react-query"
 import {
 	type Any,
@@ -22,10 +32,47 @@ import {
 	type ChainTxContext,
 	type NativeChainTxContext,
 	type NativeSubmissionReceipt,
-	requireNativeChainTxContext
+	requireNativeChainTxContext,
+	type SubmissionReceipt
 } from "./context.js"
 
-export const sdkKeys = {
+export type SdkChainKey = readonly [
+	"pioneer-chain",
+	string,
+	string,
+	string | null
+]
+export type SdkModuleKey = readonly [...SdkChainKey, string]
+export type SdkQueryKey = readonly [...SdkModuleKey, "query", string, string]
+export type SdkTxKey = readonly [...SdkModuleKey, "tx", string, string | null]
+export type SdkQueryOptions<O extends DescMessage> = OmitKeyof<
+	UseQueryOptions<number[], Error, MessageShape<O>, readonly unknown[]>,
+	"queryFn"
+> & {
+	queryFn?: QueryFunction<number[], readonly unknown[], never> | undefined
+} & QueryKeyWithDataTag<readonly unknown[], number[], Error>
+export type SdkMutationOptions<O, I> = WithRequired<
+	UseMutationOptions<O, Error, I, unknown>,
+	"mutationKey"
+>
+
+export const sdkKeys: {
+	all: (context: ChainHookContext) => SdkChainKey
+	module: (context: ChainHookContext, module: string) => SdkModuleKey
+	query: <I extends DescMessage>(
+		context: ChainHookContext,
+		module: string,
+		operation: string,
+		schema: I,
+		input: MessageInitShape<I>
+	) => SdkQueryKey
+	tx: (
+		context: ChainHookContext,
+		module: string,
+		operation: string,
+		signerAddress?: string
+	) => SdkTxKey
+} = {
 	all: (context: ChainHookContext) =>
 		[
 			"pioneer-chain",
@@ -73,7 +120,7 @@ export function sdkQueryOptions<I extends DescMessage, O extends DescMessage>(
 		request: MessageInitShape<I>,
 		options?: CallOptions
 	) => Promise<MessageShape<O>>
-) {
+): SdkQueryOptions<O> {
 	const request = create(method.input, structuredClone(input))
 	return queryOptions({
 		queryKey: key,
@@ -88,7 +135,7 @@ export function sdkMessageMutationOptions<I>(
 	context: ChainTxContext,
 	key: readonly unknown[],
 	pack: (input: I) => Any
-) {
+): SdkMutationOptions<SubmissionReceipt, I> {
 	if (!context.signerAddress)
 		throw new Error("An explicit signing account is required")
 	return mutationOptions({
@@ -281,7 +328,7 @@ export function sdkNativeMessageMutationOptions<
 export function sdkServiceMutationOptions<I, O>(
 	key: readonly unknown[],
 	call: (input: I) => Promise<O>
-) {
+): SdkMutationOptions<O, I> {
 	return mutationOptions({
 		mutationKey: key,
 		mutationFn: (input: I) => call(structuredClone(input)),
@@ -295,7 +342,7 @@ export async function invalidateIncludedTransaction(
 	cache: QueryClient,
 	context: ChainHookContext,
 	result: unknown
-) {
+): Promise<void> {
 	if (
 		!(typeof result === "object" && result !== null && "txResponse" in result)
 	)
@@ -312,4 +359,36 @@ export async function invalidateIncludedTransaction(
 	)
 		return
 	await cache.invalidateQueries({ queryKey: sdkKeys.all(context) })
+}
+
+/** Suspense read over SDK query options; generated hooks share one typed call. */
+export function useSdkQuery<O extends DescMessage>(
+	options: SdkQueryOptions<O>
+): UseSuspenseQueryResult<MessageShape<O>, Error> {
+	return useSuspenseQuery(options)
+}
+
+/** Explicit submission; an included transaction invalidates this chain's reads. */
+export function useSdkMutation<O, I>(
+	context: ChainHookContext,
+	options: SdkMutationOptions<O, I>
+): UseMutationResult<O, Error, I> {
+	const cache = useQueryClient()
+	return useMutation({
+		...options,
+		onSuccess: (result) => invalidateIncludedTransaction(cache, context, result)
+	})
+}
+
+export function useSdkNativeMutation<
+	I extends DescMessage,
+	O extends DescMessage
+>(
+	options: NativeMessageMutationOptions<I, O>
+): UseMutationResult<
+	NativeMessageReceipt<O>,
+	Error,
+	NativeMutationVariables<MessageInitShape<I>>
+> {
+	return useMutation(options)
 }
