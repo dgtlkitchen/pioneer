@@ -36,6 +36,10 @@ export type GenerateOptions = {
 	packageVersion?: string
 	ignorePaths?: string[]
 	react?: boolean
+	/** SPDX expression for the generated package.json; defaults to UNLICENSED. */
+	license?: string
+	/** Files (such as LICENSE and NOTICE) published at the package root. */
+	licenseFiles?: string[]
 }
 
 function packageVersion(name: string) {
@@ -140,6 +144,7 @@ export async function generate(options: GenerateOptions) {
 	const name = options.packageName ?? "generated-protobuf-sdk"
 	const version = options.packageVersion ?? "0.1.0"
 	const react = options.react ?? false
+	const license = options.license ?? "UNLICENSED"
 	const finderMetadata: string[] = []
 	const ignorePaths = (options.ignorePaths ?? []).map((path) =>
 		path.replace(/\/$/, "")
@@ -154,6 +159,25 @@ export async function generate(options: GenerateOptions) {
 		throw new Error("Invalid npm package name")
 	if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))
 		throw new Error("Invalid package version")
+	if (!/^[A-Za-z0-9][A-Za-z0-9.+\-() ]{0,127}$/.test(license))
+		throw new Error("Invalid package license")
+	const licenseFiles = await Promise.all(
+		(options.licenseFiles ?? []).map(async (path) => {
+			const file = basename(path)
+			if (
+				!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file) ||
+				file.endsWith(".ts") ||
+				file === "provenance.json"
+			)
+				throw new Error(`Invalid license file name: ${file}`)
+			const text = await fs.readFile(resolve(path), "utf8")
+			if (text.length > 1024 * 1024)
+				throw new Error(`License file exceeds 1 MiB: ${file}`)
+			return [file, text] as const
+		})
+	)
+	if (new Set(licenseFiles.map(([file]) => file)).size !== licenseFiles.length)
+		throw new Error("License file names must be unique")
 	if (output === input || input.startsWith(`${output}/`))
 		throw new Error("Output must not contain the input source")
 	let previousInput: string | undefined
@@ -364,7 +388,9 @@ export async function generate(options: GenerateOptions) {
 				name,
 				version,
 				react,
-				ignorePaths
+				ignorePaths,
+				license,
+				licenseFiles: licenseFiles.map(([file, text]) => [file, digest(text)])
 			})
 		)
 		// Verified, unchanged output for identical inputs and toolchain: nothing to do.
@@ -405,14 +431,15 @@ export async function generate(options: GenerateOptions) {
 					name,
 					version,
 					type: "module",
-					license: "UNLICENSED",
+					license,
 					sideEffects: false,
 					files: [
 						"dist",
 						"operations.json",
 						"provenance.json",
 						"README.md",
-						...(react ? ["react/hooks.json"] : [])
+						...(react ? ["react/hooks.json"] : []),
+						...licenseFiles.map(([file]) => file)
 					],
 					exports: {
 						".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
@@ -461,9 +488,13 @@ descriptor and artifact hashes. Two pinned runtime dependencies, with no transit
 runtime dependencies at these versions. The generated package contains no CLI,
 Node transport, wallet secret, database or installation hook.
 
-Before publication the owner must approve source/generated-code licensing, choose
+${
+	license === "UNLICENSED"
+		? `Before publication the owner must approve source/generated-code licensing, choose
 release metadata, review npm pack --dry-run, and explicitly authorize publishing.
-UNLICENSED is deliberate, not an MIT license claim.
+UNLICENSED is deliberate, not an MIT license claim.`
+		: `Licensed under ${license}${licenseFiles.length ? `; see ${licenseFiles.map(([file]) => file).join(" and ")}` : ""}.`
+}
 ${cosmos ? "\nCosmos DIRECT helpers do not discover account identity, choose fees, or authorize signing. Chain-specific signature envelopes belong to the consuming application.\n" : ""}
 ${
 	react
@@ -511,6 +542,11 @@ a QueryClientProvider does not supply a wallet or authorize transactions.
 		: ""
 }`
 		)
+		for (const [file, text] of licenseFiles) {
+			if (packageFiles.has(file))
+				throw new Error(`License file collides with generated file: ${file}`)
+			packageFiles.set(file, text)
+		}
 		const emitted = await emitPackage(packageFiles)
 		await checkPackage({
 			root: output,

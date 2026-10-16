@@ -431,6 +431,63 @@ test("ignored namespaces are absent, optional React output does not change core 
 	}
 }, 120_000)
 
+test("license options publish the SPDX license and license files", async () => {
+	const temporary = await fs.mkdtemp(join(tmpdir(), "pioneer-license-test-"))
+	try {
+		const input = join(temporary, "proto")
+		const output = join(temporary, "sdk")
+		await fs.cp(join(toolRoot, "tests/fixtures/proto"), input, {
+			recursive: true
+		})
+		const notice = join(temporary, "NOTICE")
+		await fs.writeFile(notice, "Synthetic notice\n")
+		const options = {
+			inputPath: input,
+			outputPath: output,
+			license: "Apache-2.0",
+			licenseFiles: [join(toolRoot, "LICENSE"), notice]
+		}
+		await generate(options)
+		const manifest = JSON.parse(
+			await fs.readFile(join(output, "package.json"), "utf8")
+		)
+		expect(manifest.license).toBe("Apache-2.0")
+		expect(manifest.files).toEqual(
+			expect.arrayContaining(["LICENSE", "NOTICE"])
+		)
+		expect(await fs.readFile(join(output, "LICENSE"), "utf8")).toBe(
+			await fs.readFile(join(toolRoot, "LICENSE"), "utf8")
+		)
+		const provenance = JSON.parse(
+			await fs.readFile(join(output, "provenance.json"), "utf8")
+		)
+		expect(Object.keys(provenance.artifacts)).toEqual(
+			expect.arrayContaining(["LICENSE", "NOTICE"])
+		)
+		const readme = await fs.readFile(join(output, "README.md"), "utf8")
+		expect(readme).toContain(
+			"Licensed under Apache-2.0; see LICENSE and NOTICE."
+		)
+		expect(readme).not.toContain("UNLICENSED")
+		// Changing license text is an input change and regenerates the file.
+		await fs.writeFile(notice, "Updated notice\n")
+		await generate(options)
+		expect(await fs.readFile(join(output, "NOTICE"), "utf8")).toBe(
+			"Updated notice\n"
+		)
+		await expect(
+			generate({ ...options, license: "Apache-2.0; rm" })
+		).rejects.toThrow("Invalid package license")
+		const readmeFile = join(temporary, "README.md")
+		await fs.writeFile(readmeFile, "collision")
+		await expect(
+			generate({ ...options, licenseFiles: [readmeFile] })
+		).rejects.toThrow("collides with generated file")
+	} finally {
+		await fs.rm(temporary, { recursive: true, force: true })
+	}
+}, 120_000)
+
 test("message hooks add native signatures beside unchanged legacy operations", () => {
 	const files = generateReact([
 		{

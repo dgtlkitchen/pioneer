@@ -241,7 +241,10 @@ The output has npm package layout, **not publication authorization**. Pioneer
 declares the selected Apache-2.0 license with the complete text in `LICENSE`.
 The existing author attribution remains in `package.json`. Source attribution
 and distribution-rights review remain release gates, not conclusions from the
-license selection. Generic generated packages still default to `UNLICENSED`.
+license selection. Generated packages default to `UNLICENSED`; pass
+`--license <SPDX>` and repeatable `--license-file <path>` (for example the schema
+repository's `LICENSE` and `NOTICE`) to publish a license and its text at the
+package root.
 The CLI license does not change input-schema licenses or generated-package rights.
 The selected `@vastward/sdk` license requires its separate metadata approval.
 
